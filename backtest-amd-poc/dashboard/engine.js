@@ -186,7 +186,7 @@
     tf: 15, atr_len: 50, impulse_bars: 20, impulse_atr: 4.0, range_min_bars: 12, range_max_bars: 60,
     range_max_frac: 0.4, range_max_atr: 5.0, pivot_len: 2, range_min_touches: 2, range_touch_zone: 0.2, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
     retest_max_bars: 30, touch_tol_atr: 0.1, wick_frac: 0.4, inval_close_atr: 0.25, entry_touch: 1,
-    entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0,
+    entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0, target_lookback: 40, tp_front_atr: 0,
     sl_buffer_atr: 0.05, min_risk_atr: 0.1, poc_bins: 50, long: true, short: true,
     ny_open: false, open_window_min: 60, require_impulse: true,
     cost: 0.35, max_hold_min: 4320, min_rr: 1.0, split: 0.7,
@@ -303,7 +303,13 @@
         else { level = NaN; eFrom = entryBar + 1; eUntil = entryBar + 2; ref = C[entryBar]; }
       }
       if (ref - sl < p.min_risk_atr * aE) sl = ref - p.min_risk_atr * aE;
-      setups.push({ range_start: s, range_end: e, sweep_bar: j, sweep_low: lowMin, reclaim_bar: reclaimed, first_touch: firstTouch,
+      const structLevels = [];
+      for (let q = Math.max(0, s - p.target_lookback); q < s - p.pivot_len; q++) {
+        if (ph[q] && H[q] > rh) structLevels.push(H[q]);
+        if (pl[q] && L[q] > rh) structLevels.push(L[q]);
+      }
+      structLevels.sort((x, y) => x - y);
+      setups.push({ struct_levels: structLevels, range_start: s, range_end: e, sweep_bar: j, sweep_low: lowMin, reclaim_bar: reclaimed, first_touch: firstTouch,
         signal_bar: entryBar, range_high: rh, range_low: rl, poc: pc, impulse_top: top, sl, atr: aE,
         entry_type: p.entry_mode, entry_level: level, entry_from: T(eFrom), entry_until: T(eUntil) });
       f.entries++;
@@ -329,6 +335,7 @@
         st.side = side;
         st.signal_time = dTF.t[st.signal_bar];
         for (const k of ["range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low", "entry_level"]) st[k] = sg * st[k];
+        st.struct_levels = st.struct_levels.map((x) => sg * x);
         if (sg < 0) [st.range_high, st.range_low] = [st.range_low, st.range_high];
         out.push(st);
       }
@@ -343,6 +350,7 @@
     { id: "A_origen_impulso", label: "Origen del impulso", kind: "level" },
     { id: "B_rango_x1", label: "Rango ×1", kind: "proj", mult: 1 },
     { id: "B_rango_x2", label: "Rango ×2", kind: "proj", mult: 2 },
+    { id: "G_estructura_previa", label: "Estructura previa", kind: "struct" },
     { id: "C_2R", label: "2R fijo", kind: "r", r: 2 },
     { id: "C_3R", label: "3R fijo", kind: "r", r: 3 },
     { id: "C_5R", label: "5R fijo", kind: "r", r: 5 },
@@ -427,8 +435,13 @@
         if (v.kind === "level") tp = top;
         else if (v.kind === "proj") tp = rh + v.mult * height;
         else if (v.kind === "r") tp = entry + v.r * risk;
+        else if (v.kind === "struct") {
+          const lv = st.struct_levels.map((x) => sg * x - p.tp_front_atr * a).sort((x, y) => x - y);
+          tp = lv.find((x) => x - entry >= p.min_rr * risk);
+          if (tp === undefined) continue;
+        }
         if ((v.kind === "level" || v.kind === "proj") && tp - entry < p.min_rr * risk) continue;
-        if (v.kind === "level" || v.kind === "proj" || v.kind === "r") {
+        if (v.kind === "level" || v.kind === "proj" || v.kind === "r" || v.kind === "struct") {
           ex = exitLong(lo, hi, cl, k0, k1, sl, tp);
           R = (ex.px - entry - cost) / risk;
         } else if (v.kind === "partial") {
@@ -458,7 +471,12 @@
           tp = ex.stop;
           R = (ex.px - entry - cost) / risk;
         }
-        rows.push({ setup: st0, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
+        // diagnóstico: tras un SL, ¿el precio llegó después al objetivo?
+        let tpAfterSl = false;
+        if (ex.why === "SL" && (v.kind !== "trail_atr" && v.kind !== "trail_struct") && isFinite(tp)) {
+          for (let i = ex.idx + 1; i < k1; i++) if (hi[i] >= tp) { tpAfterSl = true; break; }
+        }
+        rows.push({ tp_after_sl: tpAfterSl, setup: st0, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
           sl: st.sl, tp: isFinite(tp) ? sg * tp : NaN, risk, exit_time: t1[ex.idx], exit_reason: ex.why, R, cost_R: cost / risk });
       }
     }

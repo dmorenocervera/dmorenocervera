@@ -7,7 +7,7 @@ Setup de **Acumulación → Manipulación → Distribución** con entrada en el 
 3. **Manipulación**: el precio barre la liquidez del lado contrario (SSL bajo el rango para largos).
 4. **Recuperación**: cierre de nuevo por encima del PoC en ≤ N velas.
 5. **Entrada** (`--entry-mode`): `close` = a mercado tras la vela de reacción (mecha que perfora el PoC y cierre por encima); `break` = orden stop en el máximo de esa vela; `limit` = orden límite en el PoC al primer toque. SL bajo el mínimo local del retesteo (o PoC − x·ATR en `limit`).
-6. **Salida**: se comparan 9 variantes (origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE, trailing ATR y trailing por estructura).
+6. **Salida**: se comparan 10 variantes (estructura previa al rango, origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE, trailing ATR y trailing por estructura).
 
 Los cortos son el espejo exacto (barrido del BSL y retesteo del PoC como resistencia).
 

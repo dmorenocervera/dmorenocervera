@@ -51,6 +51,8 @@ class Params:
     # Trailing stops (variantes de salida E y F)
     trail_atr: float = 2.5          # E: stop = máximo alcanzado - x*ATR
     trail_start_R: float = 1.0      # el trailing se activa cuando el precio llega a +x R
+    target_lookback: int = 40       # G: velas antes del rango donde se buscan niveles de estructura
+    tp_front_atr: float = 0.0       # G: adelantar el TP x*ATR antes del nivel
     poc_bins: int = 50
     sides: tuple = ("long", "short")
     # Modo apertura de Nueva York: el rango llega intacto a las 9:30 ET y la
@@ -98,6 +100,17 @@ def pivots(H, L, k):
         ph[q] = H[q] >= H[q - k : q].max() and H[q] > H[q + 1 : q + k + 1].max()
         pl[q] = L[q] <= L[q - k : q].min() and L[q] < L[q + 1 : q + k + 1].min()
     return ph, pl
+
+
+def _struct_levels(H, L, ph, pl, s, rh, p):
+    """Niveles de estructura previos al rango (máximos y mínimos de pivote) por encima del rango, de menor a mayor."""
+    lv = []
+    for q in range(max(0, s - p.target_lookback), s - p.pivot_len):
+        if ph[q] and H[q] > rh:
+            lv.append(H[q])
+        if pl[q] and L[q] > rh:
+            lv.append(L[q])
+    return sorted(lv)
 
 
 def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: Funnel):
@@ -249,7 +262,8 @@ def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: 
             dict(
                 range_start=s, range_end=e, sweep_bar=j, sweep_low=low_min, reclaim_bar=reclaimed,
                 first_touch=first_touch, signal_bar=entry_bar, range_high=rh, range_low=rl, poc=pc,
-                impulse_top=top, sl=sl, atr=a_e, entry_type=p.entry_mode, entry_level=level,
+                impulse_top=top, sl=sl, atr=a_e, entry_type=p.entry_mode,
+                struct_levels=_struct_levels(H, L, ph, pl, s, rh, p), entry_level=level,
                 entry_from=t_tf[e_from], entry_until=t_tf[e_until],
             )
         )
@@ -279,6 +293,7 @@ def detect(df_tf: pd.DataFrame, df_1m: pd.DataFrame, p: Params):
                 st[k] = pd.Timestamp(int(st[k]), tz="UTC") if st[k] < np.iinfo(np.int64).max else pd.Timestamp.max.tz_localize("UTC")
             for k in ("range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low", "entry_level"):
                 st[k] = sg * st[k]
+            st["struct_levels"] = [sg * x for x in st["struct_levels"]]
             if sg < 0:
                 st["range_high"], st["range_low"] = st["range_low"], st["range_high"]
             out.append(st)

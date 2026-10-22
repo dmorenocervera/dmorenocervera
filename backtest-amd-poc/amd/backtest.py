@@ -11,6 +11,7 @@ VARIANTS = {
     "A_origen_impulso": dict(kind="level", level="impulse_top"),
     "B_rango_x1": dict(kind="proj", mult=1.0),
     "B_rango_x2": dict(kind="proj", mult=2.0),
+    "G_estructura_previa": dict(kind="struct"),
     "C_2R": dict(kind="r", r=2.0),
     "C_3R": dict(kind="r", r=3.0),
     "C_5R": dict(kind="r", r=5.0),
@@ -149,9 +150,16 @@ def simulate(setups, df_1m: pd.DataFrame, cost: float, max_hold_min: int = 3 * 2
                 tp = rh + v["mult"] * height
             elif kind == "r":
                 tp = entry + v["r"] * risk
+            elif kind == "struct":
+                # primer nivel de estructura previa que dé al menos min_rr
+                front = getattr(p, "tp_front_atr", 0.0) * a
+                lv = sorted(sg * x - front for x in st["struct_levels"])
+                tp = next((x for x in lv if x - entry >= min_rr * risk), np.nan)
+                if not np.isfinite(tp):
+                    continue
             if kind in ("level", "proj") and (tp - entry) < min_rr * risk:
                 continue  # el objetivo no compensa el riesgo: no se opera esta variante
-            if kind in ("level", "proj", "r"):
+            if kind in ("level", "proj", "r", "struct"):
                 px, idx, why = _exit(lo, hi, cl, entry, sl, tp)
                 R = (px - entry - cost) / risk
             elif kind == "partial":
