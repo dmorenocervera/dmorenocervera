@@ -4,8 +4,8 @@ Setup de **Acumulación → Manipulación → Distribución** con entrada en el 
 
 1. **Contexto**: impulso fuerte previo (opcional).
 2. **Acumulación**: rango lateral con al menos 2 máximos (pivotes) en su zona alta y 2 mínimos en su zona baja. Se calcula su Volume Profile (rango fijo, con velas de 1m) y su **PoC**.
-3. **Manipulación**: el precio barre la liquidez del lado contrario (SSL bajo el rango para largos).
-4. **Recuperación**: cierre de nuevo por encima del PoC en ≤ N velas.
+3. **Manipulación**: el precio barre la liquidez de un lado del rango (SSL abajo → largo; BSL arriba → corto). Las dos direcciones se evalúan en el mismo recorrido.
+4. **Confirmación** (`--confirm-mode`): `opuesto` = cierre fuera del rango por el lado contrario al barrido (por defecto); `poc` = cierre al otro lado del PoC. Un pinchazo que no se confirma no cierra el rango: se absorbe y el rango se amplía (rango elástico).
 5. **Entrada** (`--entry-mode`): `close` = a mercado tras la vela de reacción (mecha que perfora el PoC y cierre por encima); `break` = orden stop en el máximo de esa vela; `limit` = orden límite en el PoC al primer toque. SL bajo el mínimo local del retesteo (o PoC − x·ATR en `limit`).
 6. **Salida**: se comparan 12 variantes (directriz alcista, directriz o estructura previa, estructura previa al rango, origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE, trailing ATR y trailing por estructura).
 
@@ -50,5 +50,11 @@ python -m pytest -q
 ```
 
 ## Dashboard interactivo
+
+Dos vistas:
+
+- **Automático**: el detector busca los setups con las reglas y parámetros del panel.
+- **Manual · replay**: avanzas vela a vela sin ver el futuro, marcas tú el rango y la entrada, y el motor calcula el resultado con las mismas salidas. También mide cuántos de tus setups encuentra el detector automático y cuántas señales del detector no habrías tomado tú.
+
 
 `dashboard/index.html` + `dashboard/engine.js`: el mismo motor portado a JavaScript (resultados idénticos a Python) que se ejecuta en el navegador. Cargas un CSV de velas de 1m, ajustas los parámetros por fase y ves al momento métricas, curva de equity, embudo del setup, desglose y el gráfico de cada operación. Se abre directamente en el navegador, sin servidor.

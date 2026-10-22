@@ -184,7 +184,7 @@
   // ---------- Parámetros ----------
   const DEFAULTS = {
     tf: 15, atr_len: 50, impulse_bars: 20, impulse_atr: 4.0, range_min_bars: 12, range_max_bars: 60,
-    range_max_frac: 0.4, range_max_atr: 5.0, pivot_len: 2, range_min_touches: 2, range_touch_zone: 0.2, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
+    range_max_frac: 0.4, range_max_atr: 5.0, confirm_mode: "opuesto", confirm_buffer_atr: 0.1, pivot_len: 2, range_min_touches: 2, range_touch_zone: 0.2, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
     retest_max_bars: 30, touch_tol_atr: 0.1, wick_frac: 0.4, inval_close_atr: 0.25, entry_touch: 1,
     entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0, target_lookback: 40, tp_front_atr: 0, tl_buffer_atr: 0.1, tl_wait_pivot: true,
     sl_buffer_atr: 0.05, min_risk_atr: 0.1, poc_bins: 50, long: true, short: false,
@@ -193,8 +193,8 @@
   };
 
   function newFunnel() {
-    return { ranges: 0, few_touches: 0, outside_open_window: 0, broke_wrong_side: 0, swept: 0, sweep_too_deep: 0, sweep_too_shallow: 0,
-      no_reclaim: 0, reclaimed: 0, retest_invalid: 0, retest_timeout: 0, entries: 0 };
+    return { ranges: 0, few_touches: 0, absorbed: 0, outside_open_window: 0, expired: 0, swept: 0, sweep_too_deep: 0,
+      confirmed: 0, other_side: 0, retest_invalid: 0, retest_timeout: 0, entries: 0 };
   }
 
   // Pivotes (fractales): máximo >= k velas anteriores y > k posteriores; mínimos al revés
@@ -210,139 +210,143 @@
     return { ph, pl };
   }
 
-  // ---------- Detector (espacio largo) ----------
-  function detectLong(O, H, L, C, V1, H1, L1, tTF, t1, nyMin, p, f) {
-    const n = C.length;
-    const A = atr(H, L, C, p.atr_len);
-    const W = p.range_min_bars;
-    const rHi = rollMax(H, W), rLo = rollMin(L, W);
-    const ih = rollMax(H, p.impulse_bars);
-    const impHi = (i) => (i - W >= 0 ? ih[i - W] : NaN);
+  // ---------- Detector ----------
+  // Retesteo del PoC en espacio largo -> { eb, ft, fail, m }
+  function retest(Od, Hd, Ld, Cd, A, pc, rh, height, top, k, n, p) {
+    const limit = p.entry_mode === "limit";
+    let m = k + 1, touches = 0, ft = -1;
+    while (m < n - 1 && m - k <= p.retest_max_bars) {
+      const am = limit ? A[m - 1] : A[m];
+      if (top > rh + height && Hd[m] >= top) return { eb: -1, fail: "runaway", m };
+      if (limit && Ld[m] <= pc + p.touch_tol_atr * am) return { eb: m, ft: m, m };
+      if (Cd[m] < pc - p.inval_close_atr * am) return { eb: -1, fail: "invalid", m };
+      if (Ld[m] <= pc + p.touch_tol_atr * am) {
+        if (ft < 0) ft = m;
+        const rng = Hd[m] - Ld[m], wick = Math.min(Od[m], Cd[m]) - Ld[m];
+        if (Cd[m] > pc && rng > 0 && wick >= p.wick_frac * rng) { touches++; if (touches >= p.entry_touch) return { eb: m, ft, m }; }
+      }
+      m++;
+    }
+    return { eb: -1, fail: "timeout", m };
+  }
+
+  function structLevelsOf(H, L, ph, pl, s, rh, p) {
+    const lv = [];
+    for (let q = Math.max(0, s - p.target_lookback); q < s - p.pivot_len; q++) {
+      if (ph[q] && H[q] > rh) lv.push(H[q]);
+      if (pl[q] && L[q] > rh) lv.push(L[q]);
+    }
+    return lv.sort((x, y) => x - y);
+  }
+
+  function detectAll(O, H, L, C, V1, H1, L1, tTF, t1, nyMin, p, f) {
+    const n = C.length, A = atr(H, L, C, p.atr_len), W = p.range_min_bars;
+    const rHi = rollMax(H, W), rLo = rollMin(L, W), ih = rollMax(H, p.impulse_bars), il = rollMin(L, p.impulse_bars);
     const { ph, pl } = pivots(H, L, p.pivot_len);
+    const neg = (a) => a.map((x) => -x);
+    const Dsp = { 1: [O, H, L, C, ph, pl], [-1]: null };
+    const getD = (d) => (d === 1 ? Dsp[1] : (Dsp[-1] ||= [neg(O), neg(L), neg(H), neg(C), pl, ph]));
+    const enabled = { 1: !!p.long, [-1]: !!p.short };
+    const maxBars = p.ny_open ? Math.max(p.range_max_bars, 400) : p.range_max_bars;
+    const OPEN = 570;
     const T = (k) => (k < n ? tTF[k] : Infinity);
-    const rangeMax = p.ny_open ? Math.max(p.range_max_bars, 400) : p.range_max_bars;
+    const rangeOk = (rh, rl, a, top, bot) => {
+      const height = rh - rl;
+      let ok = height > 0 && height <= p.range_max_atr * a;
+      if (p.require_impulse) { const imp = Math.max(top - rl, rh - bot); ok = ok && imp >= p.impulse_atr * a && height <= p.range_max_frac * imp; }
+      return ok;
+    };
     const setups = [];
     let i = Math.max(p.atr_len, p.impulse_bars) + W;
     while (i < n - 1) {
-      const s = i - W + 1, a = A[s - 1], rh = rHi[i], rl = rLo[i], top = impHi(i);
-      if (!(isFinite(a) && isFinite(top) && a > 0)) { i++; continue; }
-      const height = rh - rl, imp = top - rl;
-      let ok = height > 0 && height <= p.range_max_atr * a;
-      if (p.require_impulse) ok = ok && imp >= p.impulse_atr * a && height <= p.range_max_frac * imp;
-      if (p.ny_open) ok = ok && nyMin[i] < 570 && nyMin[i] >= 240;
-      if (!ok) { i++; continue; }
-
+      const s = i - W + 1, a = A[s - 1];
+      let rh = rHi[i], rl = rLo[i];
+      const top = i - W >= 0 ? ih[i - W] : NaN, bot = i - W >= 0 ? il[i - W] : NaN;
+      if (!(isFinite(a) && isFinite(top) && a > 0) || !rangeOk(rh, rl, a, top, bot) || (p.ny_open && !(nyMin[i] >= 240 && nyMin[i] < OPEN))) { i++; continue; }
       f.ranges++;
-      let e = i, j = i + 1;
-      while (j < n && j - s + 1 <= rangeMax && L[j] >= rl && H[j] <= rh) { e = j; j++; }
-      if (j >= n) break;
-      if (L[j] >= rl && H[j] <= rh) { i = j; continue; }
-      // Estructura: >= N máximos en la zona alta y >= N mínimos en la zona baja (pivotes confirmados antes de la ruptura)
-      {
-        const q1 = e - p.pivot_len + 1, zone = p.range_touch_zone * height;
-        let nh = 0, nl = 0;
-        for (let q = s; q < q1; q++) { if (ph[q] && H[q] >= rh - zone) nh++; if (pl[q] && L[q] <= rl + zone) nl++; }
-        if (nh < p.range_min_touches || nl < p.range_min_touches) { f.few_touches++; i = j; continue; }
-      }
-      if (p.ny_open && !(nyMin[j] >= 570 && nyMin[j] < 570 + p.open_window_min)) { f.outside_open_window++; i = j + 1; continue; }
-      if (L[j] >= rl || H[j] > rh) { f.broke_wrong_side++; i = j + 1; continue; }
-
-      const m0 = lowerBound(t1, tTF[s]);
-      const m1 = e + 1 < n ? lowerBound(t1, tTF[e + 1]) : t1.length;
-      if (m1 - m0 < 2) { i = j + 1; continue; }
-      const pc = poc(H1, L1, V1, m0, m1, rl, rh, p.poc_bins).poc;
-
-      f.swept++;
-      let lowMin = L[j], k = j, reclaimed = -1, fail = null;
-      while (k < n && k - j <= p.reclaim_max_bars) {
-        lowMin = Math.min(lowMin, L[k]);
-        if (lowMin < rl - p.sweep_max * height) { fail = "deep"; break; }
-        if (C[k] > pc) {
-          if (rl - lowMin >= p.sweep_min * height) reclaimed = k; else fail = "shallow";
-          break;
+      let e = i, j = i + 1, nxt = null;
+      while (nxt === null) {
+        if (j >= n) { nxt = n; break; }
+        if (j - s + 1 > maxBars) { f.expired++; nxt = j; break; }
+        if (L[j] >= rl && H[j] <= rh) { e = j; j++; continue; }
+        const up = H[j] > rh, dn = L[j] < rl;
+        if (up && dn) { f.expired++; nxt = j + 1; break; }
+        const d = dn ? 1 : -1, height = rh - rl;
+        let can = true;
+        if (p.ny_open) {
+          if (nyMin[j] >= OPEN + p.open_window_min || nyMin[j] < 240) { f.outside_open_window++; nxt = j + 1; break; }
+          if (nyMin[j] < OPEN) can = false;
         }
-        k++;
-      }
-      if (reclaimed < 0) {
-        if (fail === "deep") f.sweep_too_deep++; else if (fail === "shallow") f.sweep_too_shallow++; else f.no_reclaim++;
-        i = k + 1; continue;
-      }
-      f.reclaimed++;
-
-      const limit = p.entry_mode === "limit";
-      let m = reclaimed + 1, touches = 0, firstTouch = -1, entryBar = -1;
-      fail = "timeout";
-      while (m < n - 1 && m - reclaimed <= p.retest_max_bars) {
-        const am = limit ? A[m - 1] : A[m];
-        if (top > rh + height && H[m] >= top) { fail = "runaway"; break; }
-        if (limit && L[m] <= pc + p.touch_tol_atr * am) { firstTouch = entryBar = m; break; }
-        if (C[m] < pc - p.inval_close_atr * am) { fail = "invalid"; break; }
-        if (L[m] <= pc + p.touch_tol_atr * am) {
-          if (firstTouch < 0) firstTouch = m;
-          const rng = H[m] - L[m], wick = Math.min(O[m], C[m]) - L[m];
-          if (C[m] > pc && rng > 0 && wick >= p.wick_frac * rng) {
-            touches++;
-            if (touches >= p.entry_touch) { entryBar = m; break; }
+        {
+          const q1 = j - p.pivot_len, zone = p.range_touch_zone * height;
+          let nh = 0, nl = 0;
+          for (let q = s; q < q1; q++) { if (ph[q] && H[q] >= rh - zone) nh++; if (pl[q] && L[q] <= rl + zone) nl++; }
+          if (nh < p.range_min_touches || nl < p.range_min_touches) { f.few_touches++; nxt = j; break; }
+        }
+        let pc = null;
+        if (can) {
+          const m0 = lowerBound(t1, tTF[s]), m1 = e + 1 < n ? lowerBound(t1, tTF[e + 1]) : t1.length;
+          if (m1 - m0 < 2) can = false;
+          else { pc = poc(H1, L1, V1, m0, m1, rl, rh, p.poc_bins).poc; f.swept++; }
+        }
+        let k = j, ext = null, outcome = null;
+        while (k < n && k - j <= p.reclaim_max_bars) {
+          if (d === 1) ext = ext === null ? L[k] : Math.min(ext, L[k]);
+          else ext = ext === null ? H[k] : Math.max(ext, H[k]);
+          const depth = d === 1 ? rl - ext : ext - rh;
+          if (depth > p.sweep_max * height) { outcome = "deep"; break; }
+          if (can) {
+            let conf;
+            if (p.confirm_mode === "poc") conf = d === 1 ? C[k] > pc : C[k] < pc;
+            else { const cb = p.confirm_buffer_atr * a; conf = d === 1 ? C[k] > rh + cb : C[k] < rl - cb; }
+            if (conf) { outcome = depth >= p.sweep_min * height ? "confirmed" : "shallow"; break; }
+          } else if (C[k] >= rl && C[k] <= rh) { outcome = "back"; break; }
+          if (k > j && depth < p.sweep_min * height && (d === 1 ? H[k] > rh : L[k] < rl)) { outcome = "flip"; break; }
+          k++;
+        }
+        if (outcome === "deep") { f.sweep_too_deep++; nxt = k + 1; break; }
+        if (outcome === "confirmed") {
+          f.confirmed++;
+          if (!enabled[d]) { f.other_side++; nxt = k + 1; break; }
+          const [Od, Hd, Ld, Cd, phd, pld] = getD(d);
+          const pcd = d * pc, rhd = d === 1 ? rh : -rl, topd = d === 1 ? top : -bot;
+          const r = retest(Od, Hd, Ld, Cd, A, pcd, rhd, height, topd, k, n, p);
+          if (r.eb < 0) { if (r.fail === "invalid") f.retest_invalid++; else f.retest_timeout++; nxt = r.m + 1; break; }
+          const eb = r.eb, ft = r.ft, limit = p.entry_mode === "limit", aE = limit ? A[eb - 1] : A[eb];
+          let sl, level, eFrom, eUntil, ref;
+          if (limit) { level = pcd + p.touch_tol_atr * aE; sl = pcd - p.sl_limit_atr * aE; eFrom = eb; eUntil = eb + 1; ref = level; }
+          else {
+            sl = Infinity; for (let q = ft; q <= eb; q++) sl = Math.min(sl, Ld[q]);
+            sl -= p.sl_buffer_atr * aE;
+            if (p.entry_mode === "break") { level = Hd[eb]; eFrom = eb + 1; eUntil = Math.min(eb + 1 + p.break_bars, n); ref = level; }
+            else { level = NaN; eFrom = eb + 1; eUntil = eb + 2; ref = Cd[eb]; }
           }
+          if (ref - sl < p.min_risk_atr * aE) sl = ref - p.min_risk_atr * aE;
+          const levels = structLevelsOf(Hd, Ld, phd, pld, s, rhd, p).map((x) => d * x).sort((x, y) => x - y);
+          setups.push({ side: d === 1 ? "long" : "short", range_start: s, range_end: e, sweep_bar: j, sweep_low: ext, reclaim_bar: k,
+            first_touch: ft, signal_bar: eb, range_high: rh, range_low: rl, poc: pc, impulse_top: d === 1 ? top : bot, sl: d * sl, atr: aE,
+            entry_type: p.entry_mode, entry_level: d * level, entry_from: T(eFrom), entry_until: T(eUntil), struct_levels: levels });
+          f.entries++; nxt = eb + 1; break;
         }
-        m++;
+        if (k >= n) { nxt = n; break; }
+        if (outcome === "flip") k--;
+        for (let q = j; q <= k; q++) { if (L[q] < rl) rl = L[q]; if (H[q] > rh) rh = H[q]; }
+        if (!rangeOk(rh, rl, a, top, bot)) { f.expired++; nxt = k + 1; break; }
+        f.absorbed++;
+        e = k; j = k + 1;
       }
-      if (entryBar < 0) {
-        if (fail === "invalid") f.retest_invalid++; else f.retest_timeout++;
-        i = m + 1; continue;
-      }
-      const aE = limit ? A[entryBar - 1] : A[entryBar];
-      let sl, level, eFrom, eUntil, ref;
-      if (limit) {
-        level = pc + p.touch_tol_atr * aE; sl = pc - p.sl_limit_atr * aE; eFrom = entryBar; eUntil = entryBar + 1; ref = level;
-      } else {
-        sl = Infinity;
-        for (let q = firstTouch; q <= entryBar; q++) sl = Math.min(sl, L[q]);
-        sl -= p.sl_buffer_atr * aE;
-        if (p.entry_mode === "break") { level = H[entryBar]; eFrom = entryBar + 1; eUntil = Math.min(entryBar + 1 + p.break_bars, n); ref = level; }
-        else { level = NaN; eFrom = entryBar + 1; eUntil = entryBar + 2; ref = C[entryBar]; }
-      }
-      if (ref - sl < p.min_risk_atr * aE) sl = ref - p.min_risk_atr * aE;
-      const structLevels = [];
-      for (let q = Math.max(0, s - p.target_lookback); q < s - p.pivot_len; q++) {
-        if (ph[q] && H[q] > rh) structLevels.push(H[q]);
-        if (pl[q] && L[q] > rh) structLevels.push(L[q]);
-      }
-      structLevels.sort((x, y) => x - y);
-      setups.push({ struct_levels: structLevels, range_start: s, range_end: e, sweep_bar: j, sweep_low: lowMin, reclaim_bar: reclaimed, first_touch: firstTouch,
-        signal_bar: entryBar, range_high: rh, range_low: rl, poc: pc, impulse_top: top, sl, atr: aE,
-        entry_type: p.entry_mode, entry_level: level, entry_from: T(eFrom), entry_until: T(eUntil) });
-      f.entries++;
-      i = entryBar + 1;
+      i = nxt;
     }
     return setups;
   }
 
   function detect(dTF, d1, p) {
-    const n = dTF.t.length;
-    const nyMin = new Int16Array(n);
+    const n = dTF.t.length, nyMin = new Int16Array(n);
     for (let i = 0; i < n; i++) nyMin[i] = nyMinuteOfDay(dTF.t[i]);
-    const neg = (a) => a.map((x) => -x);
-    const out = [], funnels = {};
-    for (const side of ["long", "short"]) {
-      if (!p[side]) continue;
-      const sg = side === "long" ? 1 : -1;
-      const O = sg > 0 ? dTF.o : neg(dTF.o), C = sg > 0 ? dTF.c : neg(dTF.c);
-      const H = sg > 0 ? dTF.h : neg(dTF.l), L = sg > 0 ? dTF.l : neg(dTF.h);
-      const H1 = sg > 0 ? d1.h : neg(d1.l), L1 = sg > 0 ? d1.l : neg(d1.h);
-      const f = newFunnel();
-      for (const st of detectLong(O, H, L, C, d1.v, H1, L1, dTF.t, d1.t, nyMin, p, f)) {
-        st.side = side;
-        st.signal_time = dTF.t[st.signal_bar];
-        for (const k of ["range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low", "entry_level"]) st[k] = sg * st[k];
-        st.struct_levels = st.struct_levels.map((x) => sg * x);
-        if (sg < 0) [st.range_high, st.range_low] = [st.range_low, st.range_high];
-        out.push(st);
-      }
-      funnels[side] = f;
-    }
-    out.sort((a, b) => a.signal_time - b.signal_time);
-    return { setups: out, funnels };
+    const f = newFunnel();
+    const out = detectAll(dTF.o, dTF.h, dTF.l, dTF.c, d1.v, d1.h, d1.l, dTF.t, d1.t, nyMin, p, f);
+    for (const st of out) st.signal_time = dTF.t[st.signal_bar];
+    return { setups: out, funnels: { total: f } };
   }
 
   // ---------- Simulación ----------

@@ -22,6 +22,7 @@
   --up-soft: #173229; --down-soft: #3a1d1b; --warn-soft: #3a2f17; color-scheme: dark }
 
 * { box-sizing: border-box }
+[hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--f-body); }
 .wrap { max-width: 1440px; margin: 0 auto; padding-block: 20px 48px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -60,7 +61,7 @@ details.phase[open] > summary .chev { transform: rotate(90deg) }
 .f.sw { grid-template-columns: minmax(0, 1fr) auto }
 .f.dis { opacity: .45 }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden }
-.seg button { flex: 1; border: 0; background: var(--sunken); color: var(--muted); font: 500 12.5px var(--f-body); padding: 6px 8px; cursor: pointer }
+.seg button { flex: 1; white-space: nowrap; border: 0; background: var(--sunken); color: var(--muted); font: 500 12.5px var(--f-body); padding: 6px 8px; cursor: pointer }
 .seg button[aria-pressed=true] { background: var(--accent); color: var(--surface) }
 .actions { display: flex; gap: 8px; padding: 14px; flex-wrap: wrap }
 button.b { font: 500 13px var(--f-body); padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer }
@@ -113,6 +114,19 @@ canvas { width: 100%; display: block }
 
 .trades { max-height: 420px; overflow: auto }
 .empty { color: var(--muted); padding: 24px 8px; text-align: center }
+.views { display: grid; gap: 20px; min-width: 0 }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.toolbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px }
+.toolbar input[type=date] { font: 13px var(--f-mono); padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); color: var(--ink) }
+button.b[aria-pressed=true] { background: var(--accent); color: var(--surface); border-color: var(--accent) }
+button.b:disabled { opacity: .45; cursor: default }
+button.b.long { border-color: var(--up); color: var(--up) } button.b.short { border-color: var(--down); color: var(--down) }
+.hint { font-size: 13px; color: var(--muted); margin: 10px 0 8px; min-height: 1.4em }
+.hint b { color: var(--ink) }
+#rp { cursor: crosshair; touch-action: manipulation }
+textarea { width: 100%; min-height: 70px; font: 12px var(--f-mono); padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); color: var(--ink) }
+button.x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0 4px } button.x:hover { color: var(--down) }
+kbd { font: 11px var(--f-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--sunken) }
 footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important } }
 </style>
@@ -120,7 +134,10 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch
 <div class="wrap">
   <header class="top">
     <h1>Laboratorio AMD + PoC<small>Acumulación → manipulación → retesteo del PoC. Ajusta las reglas y el backtest se recalcula al momento en tu navegador.</small></h1>
-    <span class="status" id="status">Sin datos</span>
+    <div class="toolbar">
+      <div class="seg" id="viewSeg" role="group" aria-label="Vista"><button type="button" data-v="auto" aria-pressed="true">Automático</button><button type="button" data-v="manual" aria-pressed="false">Manual · replay</button></div>
+      <span class="status" id="status">Sin datos</span>
+    </div>
   </header>
 
   <div class="grid">
@@ -146,6 +163,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch
     <main>
       <div class="banner" id="demoBanner" hidden>Estás viendo <b>datos de demostración generados al azar</b> para probar el panel. Los resultados no dicen nada de la estrategia. Carga un CSV real para evaluarla.</div>
 
+      <div class="views" id="autoView">
       <section class="card" aria-labelledby="h-sum">
         <div class="hd"><h2 id="h-sum">Resumen · <span id="selName"></span></h2><div class="chips" id="chips"></div></div>
         <div class="kpis" id="kpis"></div>
@@ -186,6 +204,54 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch
         <div class="hd"><h2 id="h-tr">Operaciones</h2><p id="trCount"></p></div>
         <div class="trades tbl" id="trades"></div>
       </section>
+      </div>
+
+      <div class="views" id="manualView" hidden>
+        <section class="card" aria-labelledby="h-rp">
+          <div class="hd"><h2 id="h-rp">Replay</h2><span class="status" id="rpTime"></span></div>
+          <div class="toolbar">
+            <button class="b" type="button" data-step="-1" title="Vela anterior (←)">◀ 1</button>
+            <button class="b" type="button" data-step="1" title="Siguiente vela (→)">1 ▶</button>
+            <button class="b" type="button" data-step="10" title="Mayús + →">10 ▶</button>
+            <button class="b" type="button" data-step="50">50 ▶</button>
+            <label class="hint" for="rpDate" style="margin:0">Ir a</label><input type="date" id="rpDate">
+            <span class="sep"></span>
+            <button class="b" type="button" id="rpZoomIn" title="Menos velas">＋</button>
+            <button class="b" type="button" id="rpZoomOut" title="Más velas">－</button>
+          </div>
+          <div class="hint" id="rpHint"></div>
+          <canvas id="rp" height="420"></canvas>
+          <div class="toolbar" style="margin-top:10px">
+            <button class="b" type="button" id="rpRange">Marcar rango</button>
+            <button class="b long" type="button" id="rpLong">Entrar largo aquí</button>
+            <button class="b short" type="button" id="rpShort">Entrar corto aquí</button>
+            <button class="b" type="button" id="rpCancel">Descartar</button>
+            <label class="hint" style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="rpSlClick"> Elegir el SL con un clic</label>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="h-mres">
+          <div class="hd"><h2 id="h-mres">Tus setups · <span id="mSelName"></span></h2><div class="chips" id="mChips"></div></div>
+          <div class="kpis" id="mKpis"></div>
+          <p class="datainfo" id="mAgree" style="margin:12px 0 0"></p>
+        </section>
+
+        <section class="card" aria-labelledby="h-mvar">
+          <div class="hd"><h2 id="h-mvar">Variantes de salida sobre tus setups</h2><p>Solo cuentan las operaciones ya cerradas en el replay.</p></div>
+          <div class="tbl" id="mVariants"></div>
+        </section>
+
+        <section class="card" aria-labelledby="h-mtr">
+          <div class="hd"><h2 id="h-mtr">Operaciones marcadas</h2><p id="mCount"></p></div>
+          <div class="trades tbl" id="mTrades"></div>
+        </section>
+
+        <section class="card" aria-labelledby="h-mbk">
+          <div class="hd"><h2 id="h-mbk">Copia de seguridad</h2><p>Las marcas se guardan en este navegador, por archivo de datos.</p></div>
+          <div class="toolbar"><button class="b" type="button" id="mCopy">Copiar marcas</button><button class="b" type="button" id="mImport">Importar</button></div>
+          <textarea id="mText" placeholder="Pega aquí unas marcas copiadas para importarlas" style="margin-top:10px"></textarea>
+        </section>
+      </div>
     </main>
   </div>
   <footer>Entrada según el modo elegido: a mercado tras la vela de reacción, con orden stop en su máximo o con orden límite en el PoC. Salidas simuladas con velas de 1 minuto; si SL y TP caen en el mismo minuto, cuenta como SL. Los cortos son el patrón espejo. Mismo motor que <code>backtest-amd-poc/</code> en el repositorio. Un t-stat por debajo de 2 o menos de ~30 operaciones no permite distinguir una ventaja del azar.</footer>
@@ -223,9 +289,12 @@ const PHASES = [
     { k: "poc_bins", l: "Niveles del perfil", step: 5, min: 10, h: "Resolución del Volume Profile para calcular el PoC." },
   ]},
   { ix: "02", t: "Manipulación", f: [
+    { k: "confirm_mode", l: "Confirmación", type: "seg", opts: [["opuesto","Romper lado opuesto"],["poc","Cruzar el PoC"]],
+      h: "Tras el barrido, qué confirma la manipulación: un cierre fuera del rango por el lado contrario, o solo un cierre al otro lado del PoC. Los pinchazos que no se confirman se absorben y el rango se amplía." },
+    { k: "confirm_buffer_atr", l: "Margen de ruptura (ATR)", step: 0.05, min: 0, dep: "opuesto", h: "El cierre debe superar el borde opuesto por x·ATR." },
     { k: "sweep_min", l: "Barrido mínimo", step: 0.05, min: 0, h: "Profundidad bajo el rango, en fracción de su altura." },
     { k: "sweep_max", l: "Barrido máximo", step: 0.1, min: 0.1, h: "Más profundo = ruptura real, se descarta." },
-    { k: "reclaim_max_bars", l: "Velas para recuperar el PoC", step: 1, min: 1 },
+    { k: "reclaim_max_bars", l: "Velas para confirmar", step: 1, min: 1, h: "Desde el barrido. Si no confirma a tiempo, el pinchazo se absorbe en el rango." },
     { k: "open_window_min", l: "Ventana de apertura (min)", step: 15, min: 15, dep: "ny" },
   ]},
   { ix: "03", t: "Retesteo y entrada", f: [
@@ -255,7 +324,7 @@ const PHASES = [
 
 const DEF = { ...A.DEFAULTS, mode: "general", max_hold_h: A.DEFAULTS.max_hold_min / 60 };
 let P = { ...DEF };
-try { const s = JSON.parse(localStorage.getItem("amd-params-v2") || "null"); if (s) P = { ...DEF, ...s }; } catch (e) {}
+try { const s = JSON.parse(localStorage.getItem("amd-params-v3") || "null"); if (s) P = { ...DEF, ...s }; } catch (e) {}
 
 // ---------- Construcción del formulario ----------
 function buildForm() {
@@ -293,7 +362,7 @@ function syncForm() {
   }
   document.querySelectorAll("[data-dep]").forEach((w) => {
     const dp = w.dataset.dep;
-    const on = dp === "ny" ? P.mode === "ny" : dp === "break" ? P.entry_mode === "break" : dp === "limit" ? P.entry_mode === "limit" : dp === "notlimit" ? P.entry_mode !== "limit" : !!P[dp];
+    const on = dp === "opuesto" ? P.confirm_mode !== "poc" : dp === "ny" ? P.mode === "ny" : dp === "break" ? P.entry_mode === "break" : dp === "limit" ? P.entry_mode === "limit" : dp === "notlimit" ? P.entry_mode !== "limit" : !!P[dp];
     w.classList.toggle("dis", !on); w.querySelectorAll("input,select").forEach((i) => (i.disabled = !on));
   });
 }
@@ -315,7 +384,8 @@ function engineParams() {
 let D1 = null, TF = {}, DATA_NAME = "", R = null, SEL = "I_directriz_o_estructura", SEL_TRADE = null, BRK = "sample";
 
 function setData(d, name, demo) {
-  D1 = d; TF = {}; DATA_NAME = name; SEL_TRADE = null;
+  D1 = d; TF = {}; DATA_NAME = name; SEL_TRADE = null; MA = null;
+  mLoad();
   $("demoBanner").hidden = !demo;
   const n = d.t.length, f = (t) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
   const dts = []; for (let i = 1; i < Math.min(n, 2000); i++) dts.push(d.t[i] - d.t[i - 1]);
@@ -366,7 +436,7 @@ $("demo").addEventListener("click", () => setData(demoData(), "Demo · paseo ale
 
 // ---------- Ejecución ----------
 let timer = null;
-function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runNow, ms); try { localStorage.setItem("amd-params-v2", JSON.stringify(P)); } catch (e) {} }
+function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runNow, ms); try { localStorage.setItem("amd-params-v3", JSON.stringify(P)); } catch (e) {} }
 function runNow() {
   if (!D1) return;
   const p = engineParams();
@@ -380,6 +450,7 @@ function runNow() {
     $("status").textContent = `${nSet} setups · ${Math.round(ms)} ms`;
     if (SEL_TRADE && !R.trades.includes(SEL_TRADE)) SEL_TRADE = null;
     render();
+    renderManual();
   }, 10);
 }
 
@@ -504,16 +575,17 @@ function drawEquity(bv) {
 function renderFunnel() {
   const f = {}; for (const s of Object.values(R.funnels)) for (const [k, v] of Object.entries(s)) f[k] = (f[k] || 0) + v;
   const ny = engineParams().ny_open;
+  const pe = engineParams();
   const steps = [
     ["Rangos candidatos", f.ranges],
-    ["Sin máximos y mínimos suficientes", f.few_touches, true],
+    ["Sin 2 máximos y 2 mínimos al llegar al borde", f.few_touches, true],
+    ["Pinchazos absorbidos (el rango se amplía)", f.absorbed, true],
+    ["Rangos caducados (largos o anchos)", f.expired, true],
     ...(ny ? [["Rotos fuera de la apertura", f.outside_open_window, true]] : []),
-    ["Rotos por el lado contrario", f.broke_wrong_side, true],
-    ["Barren liquidez", f.swept],
-    ["Barrido demasiado profundo", f.sweep_too_deep, true],
-    ["Barrido insuficiente", f.sweep_too_shallow, true],
-    ["No recuperan el PoC a tiempo", f.no_reclaim, true],
-    ["Recuperan el PoC", f.reclaimed],
+    ["Manipulaciones candidatas", f.swept],
+    ["Ruptura real (demasiado profunda)", f.sweep_too_deep, true],
+    ["Manipulación confirmada", f.confirmed],
+    ...(f.other_side ? [[`Confirmadas en ${pe.long ? "corto" : "largo"} (desactivado)`, f.other_side, true]] : []),
     ["Pierden el PoC en el retesteo", f.retest_invalid, true],
     ["Sin reacción a tiempo", f.retest_timeout, true],
     ["Señales de entrada", f.entries],
@@ -521,7 +593,7 @@ function renderFunnel() {
   ];
   const max = Math.max(1, f.ranges || 0);
   $("funnel").innerHTML = steps.map(([l, v, lost]) => `<div class="fr"><span>${l}</span><div class="track"><div class="fill${lost ? " lost" : ""}" style="width:${(100 * (v || 0)) / max}%"></div></div><span class="v"><b>${v || 0}</b>${!lost && f.ranges ? " · " + Math.round((100 * (v || 0)) / max) + "%" : ""}</span></div>`).join("") +
-    (f.swept ? `<p class="datainfo" style="margin:8px 0 0">De los barridos de rangos válidos, <b>${Math.round((100 * f.reclaimed) / f.swept)} %</b> recuperan el PoC y <b>${Math.round((100 * f.entries) / f.swept)} %</b> dan señal de entrada.</p>` : "");
+    (f.swept ? `<p class="datainfo" style="margin:8px 0 0">De las manipulaciones candidatas, <b>${Math.round((100 * f.confirmed) / f.swept)} %</b> se confirman y <b>${Math.round((100 * f.entries) / f.swept)} %</b> dan señal de entrada.</p>` : "");
 }
 
 function renderBreakdown(tr) {
@@ -632,6 +704,281 @@ function drawSetup() {
   $("setTitle").innerHTML = `${t.side === "long" ? "Largo" : "Corto"} · ${fmt.date(t.entry_time)} UTC · riesgo ${t.risk.toFixed(2)} · ${why} · <b class="${cls(t.R)}">${fmt.R(t.R)} R</b>`;
 }
 
+// ---------- Modo manual (replay) ----------
+let VIEW = "auto";
+const M = { cursorT: null, maxT: null, zoom: 120, draft: null, step: "idle", side: null, marks: [], hover: null };
+const MATCH_BARS = 8;
+const mKey = () => "amd-manual:" + DATA_NAME;
+function mLoad() {
+  M.marks = []; M.cursorT = null; M.maxT = null; M.draft = null; M.step = "idle";
+  try { const s = JSON.parse(localStorage.getItem(mKey()) || "null"); if (s) { M.marks = s.marks || []; M.cursorT = s.cursorT ?? null; M.maxT = s.maxT ?? null; } } catch (e) {}
+}
+function mSave() { try { localStorage.setItem(mKey(), JSON.stringify({ marks: M.marks, cursorT: M.cursorT, maxT: M.maxT })); } catch (e) {} }
+// índice de la última vela de la TF con t <= x
+function floorIdx(t, x) { let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi) >> 1; if (t[m] <= x) lo = m + 1; else hi = m; } return lo - 1; }
+function lb(t, x) { let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi) >> 1; if (t[m] < x) lo = m + 1; else hi = m; } return lo; }
+
+let MA = null; // ATR de la TF actual
+function mAtr(d) { if (!MA || MA.d !== d || MA.len !== engineParams().atr_len) MA = { d, len: engineParams().atr_len, a: A.atr(d.h, d.l, d.c, engineParams().atr_len) }; return MA.a; }
+function cursorIdx(d) {
+  const p = engineParams(), min = Math.min(d.t.length - 2, Math.max(p.atr_len, p.impulse_bars) + p.range_min_bars + 60);
+  if (M.cursorT == null) { M.cursorT = d.t[min]; }
+  return Math.max(min, Math.min(d.t.length - 2, floorIdx(d.t, M.cursorT)));
+}
+function rangeOf(d, rs, re) {
+  let hi = -Infinity, lo = Infinity;
+  for (let q = rs; q <= re; q++) { hi = Math.max(hi, d.h[q]); lo = Math.min(lo, d.l[q]); }
+  const m0 = lb(D1.t, d.t[rs]), m1 = re + 1 < d.t.length ? lb(D1.t, d.t[re + 1]) : D1.t.length;
+  const pc = m1 - m0 >= 2 && hi > lo ? A.poc(D1.h, D1.l, D1.v, m0, m1, lo, hi, engineParams().poc_bins).poc : (hi + lo) / 2;
+  return { hi, lo, poc: pc };
+}
+function autoSl(d, side, re, sg) {
+  const p = engineParams(), at = mAtr(d)[sg] || 0, from = Math.max(re + 1, sg - 2);
+  if (side === "long") { let lo = Infinity; for (let q = from; q <= sg; q++) lo = Math.min(lo, d.l[q]); let sl = lo - p.sl_buffer_atr * at; if (d.c[sg] - sl < p.min_risk_atr * at) sl = d.c[sg] - p.min_risk_atr * at; return sl; }
+  let hi = -Infinity; for (let q = from; q <= sg; q++) hi = Math.max(hi, d.h[q]); let sl = hi + p.sl_buffer_atr * at; if (sl - d.c[sg] < p.min_risk_atr * at) sl = d.c[sg] + p.min_risk_atr * at; return sl;
+}
+function manualSetup(mk, d) {
+  const p = engineParams(), n = d.t.length;
+  const rs = floorIdx(d.t, mk.rs), re = floorIdx(d.t, mk.re), sg = floorIdx(d.t, mk.sig);
+  if (rs < 0 || re < rs || sg <= re || sg + 1 >= n) return null;
+  const r = rangeOf(d, rs, re), long = mk.side === "long", at = mAtr(d)[sg];
+  let imp = long ? -Infinity : Infinity;
+  for (let q = Math.max(0, rs - p.impulse_bars); q < rs; q++) imp = long ? Math.max(imp, d.h[q]) : Math.min(imp, d.l[q]);
+  const pv = A.pivots(d.h, d.l, p.pivot_len), lv = [];
+  for (let q = Math.max(0, rs - p.target_lookback); q < rs - p.pivot_len; q++) {
+    if (long) { if (pv.ph[q] && d.h[q] > r.hi) lv.push(d.h[q]); if (pv.pl[q] && d.l[q] > r.hi) lv.push(d.l[q]); }
+    else { if (pv.pl[q] && d.l[q] < r.lo) lv.push(d.l[q]); if (pv.ph[q] && d.h[q] < r.lo) lv.push(d.h[q]); }
+  }
+  lv.sort((x, y) => x - y);
+  const sw = Math.min(re + 1, sg);
+  return { manual: mk, side: mk.side, range_start: rs, range_end: re, sweep_bar: sw, reclaim_bar: Math.max(sw, sg - 1), first_touch: sg, signal_bar: sg,
+    range_high: r.hi, range_low: r.lo, poc: r.poc, impulse_top: isFinite(imp) ? imp : (long ? r.hi : r.lo), sl: mk.sl, atr: at,
+    entry_type: "close", entry_level: NaN, entry_from: d.t[sg + 1], entry_until: sg + 2 < n ? d.t[sg + 2] : Infinity, struct_levels: lv, signal_time: d.t[sg] };
+}
+function manualTrades(d) {
+  const setups = M.marks.map((mk) => manualSetup(mk, d)).filter(Boolean);
+  const rows = A.simulate(setups, D1, engineParams(), d);
+  return { setups, rows };
+}
+
+function setStep(step, side) { M.step = step; M.side = side || null; renderHint(); drawReplay(); }
+function renderHint() {
+  const h = $("rpHint");
+  const hints = {
+    idle: M.draft ? `Rango marcado. Avanza vela a vela y, cuando veas tu entrada, pulsa <b>Entrar largo</b> o <b>Entrar corto</b>. La entrada es la apertura de la vela siguiente.` :
+      `Avanza con <kbd>→</kbd> (<kbd>Mayús</kbd>+<kbd>→</kbd> = 10 velas). Lo que hay a la derecha del cursor está oculto. Pulsa <b>Marcar rango</b> cuando veas una acumulación.`,
+    rangeA: `Haz clic en la <b>primera vela</b> del rango.`,
+    rangeB: `Haz clic en la <b>última vela</b> del rango.`,
+    sl: `Haz clic en el <b>precio del SL</b> para la entrada en ${M.side === "long" ? "largo" : "corto"}.`,
+  };
+  h.innerHTML = hints[M.step] || "";
+  $("rpRange").setAttribute("aria-pressed", String(M.step === "rangeA" || M.step === "rangeB"));
+  $("rpLong").disabled = $("rpShort").disabled = !(M.draft && M.draft.b != null);
+}
+
+let RP = null; // geometría del último dibujo
+function drawReplay() {
+  if (VIEW !== "manual" || !R) return;
+  const d = R.dTF, cv = $("rp"), { g, w, h } = prep(cv, cv.clientWidth < 500 ? 320 : 420);
+  const ci = cursorIdx(d), nView = M.zoom, future = Math.round(nView * 0.08);
+  const i0 = Math.max(0, ci - nView + 1);
+  const pad = { l: 8, r: 64, t: 10, b: 24 }, nb = ci - i0 + 1 + future, bw = (w - pad.l - pad.r) / nb;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = i0; i <= ci; i++) { lo = Math.min(lo, d.l[i]); hi = Math.max(hi, d.h[i]); }
+  const yp = (hi - lo) * 0.06 || 1; lo -= yp; hi += yp;
+  const X = (i) => pad.l + (i - i0 + 0.5) * bw, Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
+  RP = { i0, ci, bw, pad, lo, hi, h, X, Y, d };
+  g.font = "11px " + css("--f-mono"); g.lineWidth = 1;
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.textAlign = "left"; g.textBaseline = "middle";
+  for (const v of niceTicks(lo, hi, 6)) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(w - pad.r, Y(v)); g.stroke(); g.fillText(v.toFixed(v > 1000 ? 0 : 2), w - pad.r + 6, Y(v)); }
+  // zona futura oculta
+  g.fillStyle = css("--sunken"); g.fillRect(X(ci) + bw / 2, pad.t, future * bw, h - pad.t - pad.b);
+  // marcas guardadas
+  const p = engineParams();
+  const box = (rs, re, r, col) => {
+    if (re < i0) return;
+    g.fillStyle = col; g.globalAlpha = 0.14; g.fillRect(X(Math.max(rs, i0)) - bw / 2, Y(r.hi), (re - Math.max(rs, i0) + 1) * bw, Y(r.lo) - Y(r.hi)); g.globalAlpha = 1;
+    g.strokeStyle = css("--poc"); g.lineWidth = 1.3; g.beginPath(); g.moveTo(X(Math.max(rs, i0)) - bw / 2, Y(r.poc)); g.lineTo(X(ci) + bw / 2, Y(r.poc)); g.stroke();
+  };
+  const closed = new Map();
+  if (M.lastRows) for (const t of M.lastRows) if (t.variant === SEL) closed.set(t.setup.manual, t);
+  for (const mk of M.marks) {
+    const rs = floorIdx(d.t, mk.rs), re = floorIdx(d.t, mk.re), sg = floorIdx(d.t, mk.sig);
+    if (sg < i0 - 5 || rs > ci) continue;
+    if (re <= ci) box(rs, re, rangeOf(d, rs, re), css("--muted"));
+    if (sg + 1 <= ci) {
+      const long = mk.side === "long", ent = d.o[sg + 1];
+      g.fillStyle = css("--accent"); g.beginPath(); const x = X(sg + 1), y = Y(ent) + (long ? 4 : -4);
+      g.moveTo(x, y); g.lineTo(x - 6, y + (long ? 10 : -10)); g.lineTo(x + 6, y + (long ? 10 : -10)); g.closePath(); g.fill();
+      g.strokeStyle = css("--down"); g.setLineDash([5, 4]); g.beginPath(); g.moveTo(X(sg), Y(mk.sl)); g.lineTo(X(ci) + bw / 2, Y(mk.sl)); g.stroke(); g.setLineDash([]);
+      const tr = closed.get(mk);
+      if (tr && tr.exit_time <= d.t[ci]) {
+        const xb = floorIdx(d.t, tr.exit_time);
+        if (xb >= i0) { g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath(); g.arc(X(xb), Y(tr.exit_px), 5, 0, 7); g.stroke(); g.lineWidth = 1;
+          g.fillStyle = tr.R > 0 ? css("--up") : css("--down"); g.textAlign = "center"; g.fillText(fmt.R(tr.R) + "R", X(xb), Y(tr.exit_px) - 14); }
+      }
+    }
+  }
+  // borrador
+  if (M.draft) {
+    const a = floorIdx(d.t, M.draft.a), b = M.draft.b != null ? floorIdx(d.t, M.draft.b) : (M.hover != null ? M.hover : a);
+    const rs = Math.min(a, b), re = Math.max(a, b);
+    box(rs, re, rangeOf(d, rs, re), css("--accent"));
+  }
+  // velas
+  const up = css("--up"), dn = css("--down");
+  for (let i = i0; i <= ci; i++) {
+    const c = d.c[i] >= d.o[i] ? up : dn; g.strokeStyle = c; g.fillStyle = c; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(X(i), Y(d.h[i])); g.lineTo(X(i), Y(d.l[i])); g.stroke();
+    const y1 = Y(Math.max(d.o[i], d.c[i])), y2 = Y(Math.min(d.o[i], d.c[i]));
+    g.fillRect(X(i) - Math.max(1, bw * 0.35), y1, Math.max(2, bw * 0.7), Math.max(1, y2 - y1));
+  }
+  // cursor
+  g.strokeStyle = css("--accent"); g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(ci) + bw / 2, pad.t); g.lineTo(X(ci) + bw / 2, h - pad.b); g.stroke(); g.setLineDash([]);
+  g.fillStyle = css("--muted"); g.textAlign = "center"; g.textBaseline = "top";
+  const every = Math.max(1, Math.ceil(nb / Math.max(2, Math.floor((w - 80) / 90))));
+  for (let i = i0; i <= ci; i += every) g.fillText(fmt.date(d.t[i]).slice(5), X(i), h - pad.b + 6);
+  $("rpTime").textContent = `Cursor: ${fmt.date(d.t[ci])} UTC · ${p.tf} min`;
+}
+
+function moveCursor(nBars) {
+  if (!R) return;
+  const d = R.dTF, ci = cursorIdx(d), ni = Math.max(0, Math.min(d.t.length - 2, ci + nBars));
+  M.cursorT = d.t[ni];
+  if (M.maxT == null || M.cursorT > M.maxT) M.maxT = M.cursorT;
+  mSave(); renderManual();
+}
+document.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => moveCursor(+b.dataset.step)));
+$("rpZoomIn").addEventListener("click", () => { M.zoom = Math.max(40, Math.round(M.zoom / 1.4)); drawReplay(); });
+$("rpZoomOut").addEventListener("click", () => { M.zoom = Math.min(600, Math.round(M.zoom * 1.4)); drawReplay(); });
+$("rpDate").addEventListener("change", (e) => {
+  if (!R || !e.target.value) return;
+  const t = Date.parse(e.target.value + "T00:00:00Z"), d = R.dTF;
+  M.cursorT = d.t[Math.max(0, Math.min(d.t.length - 2, lb(d.t, t)))];
+  if (M.maxT == null || M.cursorT > M.maxT) M.maxT = M.cursorT;
+  M.draft = null; M.step = "idle"; mSave(); renderManual();
+});
+document.addEventListener("keydown", (e) => {
+  if (VIEW !== "manual" || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
+  if (e.key === "ArrowRight") { e.preventDefault(); moveCursor(e.shiftKey ? 10 : 1); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); moveCursor(e.shiftKey ? -10 : -1); }
+  if (e.key === "Escape") { M.draft = null; setStep("idle"); }
+});
+function barAt(ev) {
+  if (!RP) return null;
+  const r = $("rp").getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const i = RP.i0 + Math.floor((x - RP.pad.l) / RP.bw);
+  const price = RP.lo + (1 - (y - RP.pad.t) / (RP.h - RP.pad.t - RP.pad.b)) * (RP.hi - RP.lo);
+  return { i: Math.max(RP.i0, Math.min(RP.ci, i)), price };
+}
+$("rp").addEventListener("mousemove", (ev) => { if (M.step === "rangeB") { const b = barAt(ev); if (b && b.i !== M.hover) { M.hover = b.i; drawReplay(); } } });
+$("rp").addEventListener("click", (ev) => {
+  const b = barAt(ev); if (!b) return; const d = R.dTF;
+  if (M.step === "rangeA") { M.draft = { a: d.t[b.i], b: null }; setStep("rangeB"); }
+  else if (M.step === "rangeB") { const a = M.draft.a; M.draft = { a: Math.min(a, d.t[b.i]), b: Math.max(a, d.t[b.i]) }; M.hover = null; setStep("idle"); }
+  else if (M.step === "sl") {
+    const ci = cursorIdx(d), long = M.side === "long";
+    if (long ? b.price >= d.c[ci] : b.price <= d.c[ci]) { $("rpHint").innerHTML = `El SL tiene que quedar ${long ? "por debajo" : "por encima"} del precio. Haz clic de nuevo.`; return; }
+    addMark(M.side, b.price);
+  }
+});
+function enter(side) {
+  if (!(M.draft && M.draft.b != null)) return;
+  const d = R.dTF, ci = cursorIdx(d), re = floorIdx(d.t, M.draft.b);
+  if (ci <= re) { $("rpHint").innerHTML = "La entrada tiene que ser posterior al rango: avanza alguna vela."; return; }
+  if ($("rpSlClick").checked) { setStep("sl", side); return; }
+  addMark(side, autoSl(d, side, re, ci));
+}
+function addMark(side, sl) {
+  const d = R.dTF, ci = cursorIdx(d);
+  M.marks.push({ side, rs: M.draft.a, re: M.draft.b, sig: d.t[ci], sl, tf: engineParams().tf });
+  M.draft = null; M.step = "idle"; mSave(); renderManual();
+}
+$("rpRange").addEventListener("click", () => { M.draft = null; setStep(M.step === "rangeA" || M.step === "rangeB" ? "idle" : "rangeA"); });
+$("rpLong").addEventListener("click", () => enter("long"));
+$("rpShort").addEventListener("click", () => enter("short"));
+$("rpCancel").addEventListener("click", () => { M.draft = null; setStep("idle"); });
+
+function renderManual() {
+  if (VIEW !== "manual" || !R) return;
+  const d = R.dTF, { setups, rows } = manualTrades(d);
+  M.lastRows = rows;
+  const lim = M.maxT ?? d.t[cursorIdx(d)];
+  const closedRows = rows.filter((t) => t.exit_time <= lim);
+  const sel = closedRows.filter((t) => t.variant === SEL);
+  $("mSelName").textContent = vLabel(SEL);
+  const m = A.metrics(sel.map((t) => t.R));
+  const k = (lab, val, sub, c = "") => `<div class="kpi"><span>${lab}</span><b class="${c}">${val}</b><i>${sub}</i></div>`;
+  const open = M.marks.length - new Set(closedRows.map((t) => t.setup.manual)).size;
+  $("mKpis").innerHTML = k("Marcadas", M.marks.length, `${open} aún abiertas en el replay`) + k("Cerradas", m.trades || 0, vLabel(SEL)) +
+    k("Acierto", fmt.pct(m.win_rate), m.trades ? `${Math.round(m.win_rate * m.trades)} ganadoras` : "–") + k("Esperanza", m.trades ? fmt.R(m.avg_R) + " R" : "–", "por operación", cls(m.avg_R || 0)) +
+    k("Total", m.trades ? fmt.R(m.total_R) + " R" : "–", m.trades ? `PF ${fmt.pf(m.profit_factor)}` : "", cls(m.total_R || 0)) +
+    k("Drawdown máx.", m.trades ? fmt.num(m.max_dd_R, 1) + " R" : "–", "pico a valle", "neg") + k("Racha perdedora", maxLosing(sel) + " ops", "pérdidas seguidas", "neg") +
+    k("t-stat", fmt.num(m.t_stat, 2), m.trades >= 30 ? (m.t_stat >= 2 ? "significativo" : "no significativo") : "hacen falta ~30 operaciones");
+  const chips = [];
+  if ((m.trades || 0) < 30) chips.push(["warn", `${m.trades || 0} de ~30 operaciones para empezar a sacar conclusiones`]);
+  $("mChips").innerHTML = chips.map(([c, t]) => `<span class="chip ${c}">${t}</span>`).join("");
+  // coincidencia con el detector automático
+  if (setups.length) {
+    const t0 = Math.min(...M.marks.map((x) => x.rs)), autos = R.setups.filter((a) => a.signal_time >= t0 && a.signal_time <= lim);
+    const hit = (ms) => R.setups.find((a) => a.side === ms.side && Math.abs(a.signal_bar - ms.signal_bar) <= MATCH_BARS);
+    const found = setups.filter(hit).length;
+    const autoMatched = autos.filter((a) => setups.some((ms) => ms.side === a.side && Math.abs(a.signal_bar - ms.signal_bar) <= MATCH_BARS)).length;
+    $("mAgree").innerHTML = `Coincidencia con el detector automático (±${MATCH_BARS} velas, mismos parámetros): encuentra <b>${found} de tus ${setups.length}</b> setups. ` +
+      `En el tramo que has revisado, el detector da <b>${autos.length}</b> señales, de las que <b>${autoMatched}</b> coinciden con las tuyas.` +
+      (autos.length > autoMatched ? ` Las otras ${autos.length - autoMatched} son setups que tú no habrías tomado: revísalas en la vista automática para ver qué regla las deja pasar.` : "");
+  } else $("mAgree").innerHTML = "Marca tus primeros setups para comparar con el detector automático.";
+  // variantes
+  const bv = {}; for (const v of A.VARIANTS) bv[v.id] = []; for (const t of closedRows) bv[t.variant].push(t);
+  $("mVariants").innerHTML = `<table><thead><tr><th>Salida</th><th>Ops</th><th>Acierto</th><th>Esperanza R</th><th>PF</th><th>Total R</th><th>DD máx R</th></tr></thead><tbody>` +
+    A.VARIANTS.map((v) => { const mm = A.metrics(bv[v.id].map((t) => t.R));
+      return `<tr class="click${v.id === SEL ? " sel" : ""}" data-v="${v.id}" tabindex="0"><td>${v.label}</td><td class="n">${mm.trades}</td><td class="n">${fmt.pct(mm.win_rate)}</td><td class="n ${cls(mm.avg_R || 0)}">${fmt.R(mm.avg_R)}</td><td class="n">${fmt.pf(mm.profit_factor)}</td><td class="n ${cls(mm.total_R || 0)}">${fmt.R(mm.total_R)}</td><td class="n">${fmt.num(mm.max_dd_R, 1)}</td></tr>`; }).join("") + `</tbody></table>`;
+  // lista
+  const bySetup = new Map(); for (const t of rows) if (t.variant === SEL) bySetup.set(t.setup.manual, t);
+  $("mCount").textContent = `${M.marks.length} marcadas`;
+  $("mTrades").innerHTML = M.marks.length ? `<table><thead><tr><th>Señal (UTC)</th><th>Lado</th><th>Rango</th><th>Riesgo</th><th>Salida</th><th>R</th><th></th></tr></thead><tbody>` +
+    M.marks.map((mk, ix) => ({ mk, ix })).sort((a, b) => b.mk.sig - a.mk.sig).map(({ mk, ix }) => {
+      const t = bySetup.get(mk), done = t && t.exit_time <= lim;
+      return `<tr class="click" data-m="${ix}" tabindex="0"><td class="n">${fmt.date(mk.sig)}</td><td>${mk.side === "long" ? "Largo" : "Corto"}</td><td class="n">${fmt.date(mk.rs).slice(5)} → ${fmt.date(mk.re).slice(11)}</td>
+        <td class="n">${t ? t.risk.toFixed(2) : "–"}</td><td>${t ? (done ? esc(t.exit_reason) : "en curso") : "sin datos"}</td><td class="n ${done ? cls(t.R) : ""}">${done ? fmt.R(t.R) : "–"}</td>
+        <td><button class="x" type="button" data-del="${ix}" aria-label="Borrar marca">×</button></td></tr>`; }).join("") + `</tbody></table>` : `<p class="empty">Aún no has marcado ningún setup.</p>`;
+  renderHint(); drawReplay();
+}
+$("mVariants").addEventListener("click", (e) => { const r = e.target.closest("tr[data-v]"); if (r) { SEL = r.dataset.v; render(); renderManual(); } });
+$("mTrades").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) { M.marks.splice(+del.dataset.del, 1); mSave(); renderManual(); return; }
+  const r = e.target.closest("tr[data-m]"); if (!r) return;
+  const mk = M.marks[+r.dataset.m], d = R.dTF, t = (M.lastRows || []).find((x) => x.variant === SEL && x.setup.manual === mk);
+  const target = t && t.exit_time <= (M.maxT ?? 0) ? t.exit_time : mk.sig;
+  M.cursorT = d.t[Math.min(d.t.length - 2, floorIdx(d.t, target) + 10)];
+  if (M.cursorT > (M.maxT ?? 0)) M.cursorT = Math.min(M.cursorT, Math.max(M.maxT ?? 0, mk.sig));
+  mSave(); renderManual(); $("rp").scrollIntoView({ block: "center", behavior: "smooth" });
+});
+$("mCopy").addEventListener("click", () => {
+  const txt = JSON.stringify({ datos: DATA_NAME, marks: M.marks }), b = $("mCopy");
+  const done = (ok) => { b.textContent = ok ? "Copiado" : "No se pudo copiar"; if (!ok) { $("mText").value = txt; $("mText").select(); } setTimeout(() => (b.textContent = "Copiar marcas"), 1600); };
+  try { navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); } catch (e) { done(false); }
+});
+$("mImport").addEventListener("click", () => {
+  try {
+    const o = JSON.parse($("mText").value), list = Array.isArray(o) ? o : o.marks;
+    if (!Array.isArray(list)) throw new Error();
+    const ok = list.filter((x) => x && (x.side === "long" || x.side === "short") && [x.rs, x.re, x.sig, x.sl].every(Number.isFinite));
+    const seen = new Set(M.marks.map((x) => x.sig + x.side));
+    for (const x of ok) if (!seen.has(x.sig + x.side)) M.marks.push({ side: x.side, rs: x.rs, re: x.re, sig: x.sig, sl: x.sl, tf: x.tf });
+    $("mText").value = ""; mSave(); renderManual(); $("mImport").textContent = `Importadas ${ok.length}`;
+  } catch (e) { $("mImport").textContent = "Texto no válido"; }
+  setTimeout(() => ($("mImport").textContent = "Importar"), 1800);
+});
+$("viewSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return; VIEW = b.dataset.v;
+  $("viewSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  $("autoView").hidden = VIEW !== "auto"; $("manualView").hidden = VIEW !== "manual";
+  try { localStorage.setItem("amd-view", VIEW); } catch (e2) {}
+  if (VIEW === "manual") renderManual(); else render();
+});
+
 // ---------- Botones ----------
 $("reset").addEventListener("click", () => { P = { ...DEF }; syncForm(); schedule(0); });
 $("copy").addEventListener("click", () => {
@@ -641,7 +988,7 @@ $("copy").addEventListener("click", () => {
 });
 
 // ---------- Redibujado por tema / tamaño ----------
-let rz; const redraw = () => { clearTimeout(rz); rz = setTimeout(() => { if (R) { drawEquity(byVariant()); drawSetup(); } }, 100); };
+let rz; const redraw = () => { clearTimeout(rz); rz = setTimeout(() => { if (R) { drawEquity(byVariant()); drawSetup(); drawReplay(); } }, 100); };
 window.addEventListener("resize", redraw);
 try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw); } catch (e) {}
 new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

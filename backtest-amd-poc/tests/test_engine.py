@@ -105,7 +105,7 @@ def test_range_needs_touches():
     df1 = _pattern()
     dft = resample(df1, "15min")
     setups, f = detect(dft, df1, Params(tf="15min", range_min_touches=50, sides=("long",)))
-    assert not setups and f["long"].few_touches > 0
+    assert not setups and f["total"].few_touches > 0
 
 
 def test_trailing_stop_never_moves_down():
@@ -125,3 +125,42 @@ def test_trendline_exit_rides_the_move():
     h = tr.loc["H_directriz"]
     # la subida es limpia: la directriz no se pierde hasta arriba y la salida captura buena parte del movimiento
     assert h["exit_reason"] in ("directriz", "tiempo") and h["R"] > 3
+
+
+def test_confirm_modes_and_elastic_range():
+    df1 = _pattern()
+    dft = resample(df1, "15min")
+    for mode in ("poc", "opuesto"):
+        setups, f = detect(dft, df1, Params(tf="15min", confirm_mode=mode))
+        assert any(s["side"] == "long" for s in setups), (mode, f)
+
+
+def test_upside_sweep_gives_short_when_enabled():
+    df1 = _pattern(mirror=True)
+    dft = resample(df1, "15min")
+    only_long, f = detect(dft, df1, Params(tf="15min"))
+    assert not only_long and f["total"].other_side >= 1  # el setup es corto: con solo largos se descarta
+    both, _ = detect(dft, df1, Params(tf="15min", sides=("long", "short")))
+    assert [s["side"] for s in both] == ["short"]
+
+
+def test_unconfirmed_poke_is_absorbed():
+    pts = [(1, 110.0)]
+    for k in range(60):
+        pts.append((15, 110.3 if k % 2 else 109.7))
+    pts += [(15 * 10, 100.0)]
+    for k in range(8):
+        pts.append((45, 101.0 if k % 2 else 99.0))         # rango con tramos de 3 velas
+    pts += [(10, 98.6), (20, 100.0)]                       # pinchazo: barre un poco y vuelve, sin confirmar
+    for k in range(10):
+        pts.append((45, 101.0 if k % 2 else 99.0))         # el rango sigue
+    pts += [(15, 100.0), (30, 97.6), (15, 98.0)]           # manipulación real
+    pts += [(45, 100.6), (30, 101.9)]                      # rompe el techo del rango
+    pts += [(8, 99.75), (7, 101.4)]                        # retesteo del PoC
+    pts += [(15 * 20, 112.0)]
+    df1 = _ohlc(_path_1m(pts))
+    df1["volume"] = 1 + 10 * np.exp(-(((df1["close"] - 100.0) / 0.3) ** 2))  # volumen concentrado en 100 -> PoC ~100
+    dft = resample(df1, "15min")
+    setups, f = detect(dft, df1, Params(tf="15min", range_max_bars=120))
+    assert f["total"].absorbed >= 1, f
+    assert len(setups) == 1 and setups[0]["range_low"] < 98.8 and setups[0]["sweep_low"] < 97.8, (setups, f)
