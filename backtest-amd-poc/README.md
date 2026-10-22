@@ -1,0 +1,50 @@
+# Backtest AMD + retesteo del PoC
+
+Setup de **Acumulación → Manipulación → Distribución** con entrada en el retesteo del PoC del rango:
+
+1. **Contexto**: impulso fuerte previo (opcional).
+2. **Acumulación**: rango lateral. Se calcula su Volume Profile (rango fijo, con velas de 1m) y su **PoC**.
+3. **Manipulación**: el precio barre la liquidez del lado contrario (SSL bajo el rango para largos).
+4. **Recuperación**: cierre de nuevo por encima del PoC en ≤ N velas.
+5. **Entrada**: retesteo del PoC con una vela que lo perfora con mecha y cierra por encima. SL bajo el mínimo local del retesteo.
+6. **Salida**: se comparan 7 variantes de TP (origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE + resto al origen del impulso).
+
+Los cortos son el espejo exacto (barrido del BSL y retesteo del PoC como resistencia).
+
+**Modo apertura NY** (`--ny-open`): el rango tiene que llegar intacto a las 9:30 ET y la manipulación ocurrir en la primera hora de sesión.
+
+## Uso
+
+```bash
+pip install -r requirements.txt
+
+# Oro (Dukascopy, volumen de ticks), varias temporalidades
+python run_backtest.py --duka XAUUSD --start 2020-01-01 --end 2025-12-31 --tf 5min,15min,1h --cost 0.35
+
+# Nasdaq 100 en modo apertura de Nueva York
+python run_backtest.py --duka USATECHIDXUSD --start 2020-01-01 --end 2025-12-31 --tf 5min --ny-open --no-impulse --cost 1.5
+
+# CSV propio de velas de 1m (TradingView, MT5, NinjaTrader...): columnas time, open, high, low, close, volume
+python run_backtest.py --csv data/NQ_1m.csv --tf 5min --cost 0.5
+```
+
+`--cost` es el coste total de ida y vuelta en unidades de precio (spread + comisión + slippage). Las salidas van a `reports/`:
+
+- `*.html`: informe con métricas por variante, dentro/fuera de muestra (70/30), por lado, sesión y año, curva de equity y gráficos de ejemplos.
+- `*_trades.csv`: todas las operaciones.
+
+Todos los umbrales del detector están en `Params` (`amd/strategy.py`).
+
+## Supuestos del backtest
+
+- Entrada en la apertura de la vela siguiente a la señal.
+- Salidas simuladas con velas de 1m; si SL y TP caen en la misma vela de 1m, cuenta como SL.
+- Cierre por tiempo a los 3 días.
+- Los resultados se miden en R (múltiplos del riesgo); `ret_1pct_risk` es el retorno compuesto arriesgando el 1 % por operación.
+- `t_stat` > 2 es el mínimo para empezar a creerse que la ventaja no es casualidad.
+
+## Tests
+
+```bash
+python -m pytest -q
+```
