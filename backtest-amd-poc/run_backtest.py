@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--ny-open", action="store_true", help="modo apertura de Nueva York (9:30 ET)")
     ap.add_argument("--no-impulse", action="store_true", help="no exigir impulso previo al rango")
     ap.add_argument("--entry-touch", type=int, default=1)
+    ap.add_argument("--entry-mode", default="close", choices=["close", "break", "limit"])
     ap.add_argument("--split", type=float, default=0.7, help="fracción del histórico considerada 'dentro de muestra'")
     ap.add_argument("--out", default="reports")
     args = ap.parse_args()
@@ -52,12 +53,13 @@ def main():
 
     overview = []
     for tf in args.tf.split(","):
-        p = Params(tf=tf, ny_open=args.ny_open, require_impulse=not args.no_impulse, entry_touch=args.entry_touch)
+        p = Params(tf=tf, ny_open=args.ny_open, require_impulse=not args.no_impulse, entry_touch=args.entry_touch,
+                   entry_mode=args.entry_mode)
         if args.ny_open:
             p.range_max_bars = 400  # el rango puede durar toda la madrugada
         dft = resample(df1, tf)
         setups, funnels = detect(dft, df1, p)
-        trades = simulate(setups, df1, cost=args.cost)
+        trades = simulate(setups, df1, cost=args.cost, df_tf=dft, p=p)
         mode = "nyopen" if args.ny_open else "general"
         tag = f"{name}_{tf}_{mode}"
         trades.to_csv(Path(args.out) / f"{tag}_trades.csv", index=False)

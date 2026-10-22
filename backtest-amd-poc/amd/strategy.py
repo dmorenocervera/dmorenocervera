@@ -26,6 +26,9 @@ class Params:
     range_max_bars: int = 60
     range_max_frac: float = 0.4     # altura del rango <= frac * impulso
     range_max_atr: float = 5.0      # altura del rango <= X ATR
+    pivot_len: int = 2              # un máximo/mínimo es un pivote de N velas a cada lado
+    range_min_touches: int = 2      # máximos en la zona alta Y mínimos en la zona baja
+    range_touch_zone: float = 0.2   # zona de toque: fracción de la altura del rango desde cada borde
     # Manipulación (barrido del SSL)
     sweep_min: float = 0.15         # profundidad mínima, fracción de la altura del rango
     sweep_max: float = 1.5          # más profundo que esto = ruptura real, se descarta
@@ -36,8 +39,18 @@ class Params:
     wick_frac: float = 0.4          # mecha inferior >= frac * rango de la vela
     inval_close_atr: float = 0.25   # cierre por debajo de PoC - x*ATR invalida
     entry_touch: int = 1            # entrar en la 1ª o 2ª reacción válida
+    # Modo de entrada:
+    #   close -> a mercado, apertura de la vela siguiente a la vela de reacción
+    #   break -> orden stop en el máximo de la vela de reacción, válida break_bars velas
+    #   limit -> orden limitada en el PoC en el primer toque tras recuperarlo (sin esperar reacción)
+    entry_mode: str = "close"
+    break_bars: int = 3
+    sl_limit_atr: float = 1.0       # SL del modo limit: PoC - x*ATR
     sl_buffer_atr: float = 0.05
     min_risk_atr: float = 0.10      # descarta SL ridículamente pequeños
+    # Trailing stops (variantes de salida E y F)
+    trail_atr: float = 2.5          # E: stop = máximo alcanzado - x*ATR
+    trail_start_R: float = 1.0      # el trailing se activa cuando el precio llega a +x R
     poc_bins: int = 50
     sides: tuple = ("long", "short")
     # Modo apertura de Nueva York: el rango llega intacto a las 9:30 ET y la
@@ -53,6 +66,7 @@ class Params:
 @dataclass
 class Funnel:
     ranges: int = 0
+    few_touches: int = 0
     outside_open_window: int = 0
     broke_wrong_side: int = 0
     swept: int = 0
@@ -75,6 +89,17 @@ def atr(h, l, c, n):
     return pd.Series(tr).rolling(n, min_periods=n).mean().to_numpy()
 
 
+def pivots(H, L, k):
+    """Pivotes (fractales): máximo >= las k velas anteriores y > las k posteriores (mínimos al revés)."""
+    n = len(H)
+    ph = np.zeros(n, bool)
+    pl = np.zeros(n, bool)
+    for q in range(k, n - k):
+        ph[q] = H[q] >= H[q - k : q].max() and H[q] > H[q + 1 : q + k + 1].max()
+        pl[q] = L[q] <= L[q - k : q].min() and L[q] < L[q + 1 : q + k + 1].min()
+    return ph, pl
+
+
 def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: Funnel):
     """Devuelve lista de setups (en 'espacio largo')."""
     n = len(C)
@@ -83,6 +108,7 @@ def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: 
     roll_hi = pd.Series(H).rolling(W).max().to_numpy()
     roll_lo = pd.Series(L).rolling(W).min().to_numpy()
     imp_hi = pd.Series(H).rolling(p.impulse_bars).max().shift(W).to_numpy()  # máximo antes del rango
+    ph, pl = pivots(H, L, p.pivot_len)
 
     setups = []
     i = max(p.atr_len, p.impulse_bars) + W
@@ -113,6 +139,16 @@ def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: 
         if j >= n:
             break
         if L[j] >= rl and H[j] <= rh:  # rango demasiado largo
+            i = j
+            continue
+        # Estructura de rango: >= N máximos en la zona alta y >= N mínimos en la zona baja,
+        # sólo pivotes ya confirmados antes de la ruptura (q + pivot_len <= e)
+        q1 = e - p.pivot_len + 1
+        zone = p.range_touch_zone * height
+        n_hi = int(np.count_nonzero(ph[s:q1] & (H[s:q1] >= rh - zone))) if q1 > s else 0
+        n_lo = int(np.count_nonzero(pl[s:q1] & (L[s:q1] <= rl + zone))) if q1 > s else 0
+        if n_hi < p.range_min_touches or n_lo < p.range_min_touches:
+            funnel.few_touches += 1
             i = j
             continue
         if p.ny_open and not (9 * 60 + 30 <= ny_min[j] < 9 * 60 + 30 + p.open_window_min):
@@ -159,14 +195,18 @@ def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: 
         funnel.reclaimed += 1
 
         # Retesteo del PoC con reacción (mecha que perfora + cierre por encima)
+        limit = p.entry_mode == "limit"
         m, touches, first_touch, entry_bar, fail = reclaimed + 1, 0, None, None, "timeout"
         while m < n - 1 and m - reclaimed <= p.retest_max_bars:
-            am = A[m]
-            if C[m] < pc - p.inval_close_atr * am:
-                fail = "invalid"
-                break
+            am = A[m - 1] if limit else A[m]  # en limit la orden se coloca antes de que cierre la vela
             if top > rh + height and H[m] >= top:  # llega al objetivo sin retestear: se pierde el trade
                 fail = "runaway"
+                break
+            if limit and L[m] <= pc + p.touch_tol_atr * am:
+                first_touch = entry_bar = m
+                break
+            if C[m] < pc - p.inval_close_atr * am:
+                fail = "invalid"
                 break
             if L[m] <= pc + p.touch_tol_atr * am:
                 if first_touch is None:
@@ -187,14 +227,30 @@ def _detect_long(O, H, L, C, V1, H1, L1, t_tf, t_1m, ny_min, p: Params, funnel: 
             i = m + 1
             continue
 
-        sl = L[first_touch : entry_bar + 1].min() - p.sl_buffer_atr * A[entry_bar]
-        if C[entry_bar] - sl < p.min_risk_atr * A[entry_bar]:
-            sl = C[entry_bar] - p.min_risk_atr * A[entry_bar]  # SL mínimo para no tener riesgos absurdos
+        a_e = A[entry_bar - 1] if limit else A[entry_bar]
+        if limit:
+            level = pc + p.touch_tol_atr * a_e
+            sl = pc - p.sl_limit_atr * a_e
+            e_from, e_until = entry_bar, entry_bar + 1
+            ref = level
+        else:
+            sl = L[first_touch : entry_bar + 1].min() - p.sl_buffer_atr * a_e
+            if p.entry_mode == "break":
+                level = H[entry_bar]
+                e_from, e_until = entry_bar + 1, min(entry_bar + 1 + p.break_bars, n)
+                ref = level
+            else:
+                level = np.nan
+                e_from, e_until = entry_bar + 1, entry_bar + 2
+                ref = C[entry_bar]
+        if ref - sl < p.min_risk_atr * a_e:
+            sl = ref - p.min_risk_atr * a_e  # SL mínimo para no tener riesgos absurdos
         setups.append(
             dict(
                 range_start=s, range_end=e, sweep_bar=j, sweep_low=low_min, reclaim_bar=reclaimed,
                 first_touch=first_touch, signal_bar=entry_bar, range_high=rh, range_low=rl, poc=pc,
-                impulse_top=top, sl=sl, atr=A[entry_bar],
+                impulse_top=top, sl=sl, atr=a_e, entry_type=p.entry_mode, entry_level=level,
+                entry_from=t_tf[e_from], entry_until=t_tf[e_until],
             )
         )
         funnel.entries += 1
@@ -219,9 +275,9 @@ def detect(df_tf: pd.DataFrame, df_1m: pd.DataFrame, p: Params):
         for st in _detect_long(O, H, L, C, df_1m["volume"].to_numpy(), H1, L1, t_tf, t_1m, ny_min, p, f):
             st["side"] = side
             st["signal_time"] = df_tf.index[st["signal_bar"]]
-            # la entrada es la apertura de la siguiente vela de la TF
-            st["entry_time"] = df_tf.index[st["signal_bar"] + 1]
-            for k in ("range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low"):
+            for k in ("entry_from", "entry_until"):
+                st[k] = pd.Timestamp(int(st[k]), tz="UTC") if st[k] < np.iinfo(np.int64).max else pd.Timestamp.max.tz_localize("UTC")
+            for k in ("range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low", "entry_level"):
                 st[k] = sg * st[k]
             if sg < 0:
                 st["range_high"], st["range_low"] = st["range_low"], st["range_high"]

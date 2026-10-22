@@ -184,16 +184,30 @@
   // ---------- Parámetros ----------
   const DEFAULTS = {
     tf: 15, atr_len: 50, impulse_bars: 20, impulse_atr: 4.0, range_min_bars: 12, range_max_bars: 60,
-    range_max_frac: 0.4, range_max_atr: 5.0, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
+    range_max_frac: 0.4, range_max_atr: 5.0, pivot_len: 2, range_min_touches: 2, range_touch_zone: 0.2, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
     retest_max_bars: 30, touch_tol_atr: 0.1, wick_frac: 0.4, inval_close_atr: 0.25, entry_touch: 1,
+    entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0,
     sl_buffer_atr: 0.05, min_risk_atr: 0.1, poc_bins: 50, long: true, short: true,
     ny_open: false, open_window_min: 60, require_impulse: true,
     cost: 0.35, max_hold_min: 4320, min_rr: 1.0, split: 0.7,
   };
 
   function newFunnel() {
-    return { ranges: 0, outside_open_window: 0, broke_wrong_side: 0, swept: 0, sweep_too_deep: 0, sweep_too_shallow: 0,
+    return { ranges: 0, few_touches: 0, outside_open_window: 0, broke_wrong_side: 0, swept: 0, sweep_too_deep: 0, sweep_too_shallow: 0,
       no_reclaim: 0, reclaimed: 0, retest_invalid: 0, retest_timeout: 0, entries: 0 };
+  }
+
+  // Pivotes (fractales): máximo >= k velas anteriores y > k posteriores; mínimos al revés
+  function pivots(H, L, k) {
+    const n = H.length, ph = new Uint8Array(n), pl = new Uint8Array(n);
+    for (let q = k; q < n - k; q++) {
+      let a = -Infinity, b = -Infinity, c = Infinity, d = Infinity;
+      for (let j = q - k; j < q; j++) { if (H[j] > a) a = H[j]; if (L[j] < c) c = L[j]; }
+      for (let j = q + 1; j <= q + k; j++) { if (H[j] > b) b = H[j]; if (L[j] < d) d = L[j]; }
+      ph[q] = H[q] >= a && H[q] > b ? 1 : 0;
+      pl[q] = L[q] <= c && L[q] < d ? 1 : 0;
+    }
+    return { ph, pl };
   }
 
   // ---------- Detector (espacio largo) ----------
@@ -204,6 +218,8 @@
     const rHi = rollMax(H, W), rLo = rollMin(L, W);
     const ih = rollMax(H, p.impulse_bars);
     const impHi = (i) => (i - W >= 0 ? ih[i - W] : NaN);
+    const { ph, pl } = pivots(H, L, p.pivot_len);
+    const T = (k) => (k < n ? tTF[k] : Infinity);
     const rangeMax = p.ny_open ? Math.max(p.range_max_bars, 400) : p.range_max_bars;
     const setups = [];
     let i = Math.max(p.atr_len, p.impulse_bars) + W;
@@ -221,6 +237,13 @@
       while (j < n && j - s + 1 <= rangeMax && L[j] >= rl && H[j] <= rh) { e = j; j++; }
       if (j >= n) break;
       if (L[j] >= rl && H[j] <= rh) { i = j; continue; }
+      // Estructura: >= N máximos en la zona alta y >= N mínimos en la zona baja (pivotes confirmados antes de la ruptura)
+      {
+        const q1 = e - p.pivot_len + 1, zone = p.range_touch_zone * height;
+        let nh = 0, nl = 0;
+        for (let q = s; q < q1; q++) { if (ph[q] && H[q] >= rh - zone) nh++; if (pl[q] && L[q] <= rl + zone) nl++; }
+        if (nh < p.range_min_touches || nl < p.range_min_touches) { f.few_touches++; i = j; continue; }
+      }
       if (p.ny_open && !(nyMin[j] >= 570 && nyMin[j] < 570 + p.open_window_min)) { f.outside_open_window++; i = j + 1; continue; }
       if (L[j] >= rl || H[j] > rh) { f.broke_wrong_side++; i = j + 1; continue; }
 
@@ -246,12 +269,14 @@
       }
       f.reclaimed++;
 
+      const limit = p.entry_mode === "limit";
       let m = reclaimed + 1, touches = 0, firstTouch = -1, entryBar = -1;
       fail = "timeout";
       while (m < n - 1 && m - reclaimed <= p.retest_max_bars) {
-        const am = A[m];
-        if (C[m] < pc - p.inval_close_atr * am) { fail = "invalid"; break; }
+        const am = limit ? A[m - 1] : A[m];
         if (top > rh + height && H[m] >= top) { fail = "runaway"; break; }
+        if (limit && L[m] <= pc + p.touch_tol_atr * am) { firstTouch = entryBar = m; break; }
+        if (C[m] < pc - p.inval_close_atr * am) { fail = "invalid"; break; }
         if (L[m] <= pc + p.touch_tol_atr * am) {
           if (firstTouch < 0) firstTouch = m;
           const rng = H[m] - L[m], wick = Math.min(O[m], C[m]) - L[m];
@@ -266,12 +291,21 @@
         if (fail === "invalid") f.retest_invalid++; else f.retest_timeout++;
         i = m + 1; continue;
       }
-      let sl = Infinity;
-      for (let q = firstTouch; q <= entryBar; q++) sl = Math.min(sl, L[q]);
-      sl -= p.sl_buffer_atr * A[entryBar];
-      if (C[entryBar] - sl < p.min_risk_atr * A[entryBar]) sl = C[entryBar] - p.min_risk_atr * A[entryBar];
+      const aE = limit ? A[entryBar - 1] : A[entryBar];
+      let sl, level, eFrom, eUntil, ref;
+      if (limit) {
+        level = pc + p.touch_tol_atr * aE; sl = pc - p.sl_limit_atr * aE; eFrom = entryBar; eUntil = entryBar + 1; ref = level;
+      } else {
+        sl = Infinity;
+        for (let q = firstTouch; q <= entryBar; q++) sl = Math.min(sl, L[q]);
+        sl -= p.sl_buffer_atr * aE;
+        if (p.entry_mode === "break") { level = H[entryBar]; eFrom = entryBar + 1; eUntil = Math.min(entryBar + 1 + p.break_bars, n); ref = level; }
+        else { level = NaN; eFrom = entryBar + 1; eUntil = entryBar + 2; ref = C[entryBar]; }
+      }
+      if (ref - sl < p.min_risk_atr * aE) sl = ref - p.min_risk_atr * aE;
       setups.push({ range_start: s, range_end: e, sweep_bar: j, sweep_low: lowMin, reclaim_bar: reclaimed, first_touch: firstTouch,
-        signal_bar: entryBar, range_high: rh, range_low: rl, poc: pc, impulse_top: top, sl, atr: A[entryBar] });
+        signal_bar: entryBar, range_high: rh, range_low: rl, poc: pc, impulse_top: top, sl, atr: aE,
+        entry_type: p.entry_mode, entry_level: level, entry_from: T(eFrom), entry_until: T(eUntil) });
       f.entries++;
       i = entryBar + 1;
     }
@@ -294,8 +328,7 @@
       for (const st of detectLong(O, H, L, C, d1.v, H1, L1, dTF.t, d1.t, nyMin, p, f)) {
         st.side = side;
         st.signal_time = dTF.t[st.signal_bar];
-        st.entry_time = dTF.t[st.signal_bar + 1];
-        for (const k of ["range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low"]) st[k] = sg * st[k];
+        for (const k of ["range_high", "range_low", "poc", "impulse_top", "sl", "sweep_low", "entry_level"]) st[k] = sg * st[k];
         if (sg < 0) [st.range_high, st.range_low] = [st.range_low, st.range_high];
         out.push(st);
       }
@@ -314,6 +347,8 @@
     { id: "C_3R", label: "3R fijo", kind: "r", r: 3 },
     { id: "C_5R", label: "5R fijo", kind: "r", r: 5 },
     { id: "D_parcial2R_BE_A", label: "50% a 2R + BE", kind: "partial", r: 2 },
+    { id: "E_trailing_ATR", label: "Trailing ATR", kind: "trail_atr" },
+    { id: "F_trailing_estructura", label: "Trailing estructura", kind: "trail_struct" },
   ];
 
   function exitLong(lo, hi, cl, a, b, sl, tp) {
@@ -325,32 +360,79 @@
     return { px: cl[b - 1], idx: b - 1, why: "tiempo" };
   }
 
-  function simulate(setups, d1, p) {
+  function exitTrailing(op, lo, hi, cl, a, b, entry, sl, candAt, act) {
+    // stop dinámico: candAt(i, prevRun) propone nivel con info hasta la vela anterior; nunca baja
+    let run = entry, stop = sl;
+    for (let i = a; i < b; i++) {
+      if (run >= act) { const c = candAt(i, run); if (c > stop) stop = c; }
+      if (lo[i] <= stop) return { px: Math.min(stop, op[i]), idx: i, why: stop <= sl ? "SL" : "trailing", stop };
+      if (hi[i] > run) run = hi[i];
+    }
+    return { px: cl[b - 1], idx: b - 1, why: "tiempo", stop };
+  }
+
+  function lastPivotLow(L, pl, k) {
+    const n = L.length, lvl = new Float64Array(n).fill(NaN), idx = new Int32Array(n).fill(-1);
+    let cl = NaN, ci = -1;
+    for (let b = 0; b < n; b++) { const q = b - k; if (q >= 0 && pl[q]) { cl = L[q]; ci = q; } lvl[b] = cl; idx[b] = ci; }
+    return { lvl, idx };
+  }
+
+  function fillOrder(st, op, lo, hi, kFrom, kUntil, sl, n1) {
+    if (st.entry_type === "close") return kFrom < n1 ? { k: kFrom, px: op[kFrom] } : null;
+    const level = st.levelLong;
+    for (let k = kFrom; k < Math.min(kUntil, n1); k++) {
+      if (st.entry_type === "break") {
+        if (hi[k] >= level) return { k, px: Math.max(level, op[k]) };
+        if (lo[k] <= sl) return null;
+      } else if (lo[k] <= level) return { k, px: Math.min(level, op[k]) };
+    }
+    return null;
+  }
+
+  function simulate(setups, d1, p, dTF) {
     const rows = [];
     const t1 = d1.t, n1 = t1.length;
-    const negLo = d1.h.map((x) => -x), negHi = d1.l.map((x) => -x), negC = d1.c.map((x) => -x);
-    for (const st of setups) {
-      const sg = st.side === "long" ? 1 : -1;
-      const k0 = lowerBound(t1, st.entry_time);
-      if (k0 >= n1) continue;
+    const neg = (a) => a.map((x) => -x);
+    const sp = { long: [d1.o, d1.l, d1.h, d1.c], short: [neg(d1.o), neg(d1.h), neg(d1.l), neg(d1.c)] };
+    // trailing por estructura: último mínimo de pivote confirmado por vela de la TF, y vela TF de cada vela de 1m
+    const struct = {};
+    let bOf = null;
+    if (dTF) {
+      bOf = new Int32Array(n1);
+      let b = 0;
+      for (let i = 0; i < n1; i++) { while (b + 1 < dTF.t.length && dTF.t[b + 1] <= t1[i]) b++; bOf[i] = t1[i] >= dTF.t[0] ? b : -1; }
+      for (const side of ["long", "short"]) {
+        const H = side === "long" ? dTF.h : neg(dTF.l), L = side === "long" ? dTF.l : neg(dTF.h);
+        struct[side] = lastPivotLow(L, pivots(H, L, p.pivot_len).pl, p.pivot_len);
+      }
+    }
+    let notFilled = 0;
+    for (const st0 of setups) {
+      const sg = st0.side === "long" ? 1 : -1;
+      const [op, lo, hi, cl] = sp[st0.side];
+      const st = { ...st0, levelLong: sg * st0.entry_level };
+      const sl = sg * st.sl;
+      const kFrom = lowerBound(t1, st.entry_from), kUntil = lowerBound(t1, st.entry_until);
+      const fl = fillOrder(st, op, lo, hi, kFrom, kUntil, sl, n1);
+      if (!fl) { notFilled++; continue; }
+      const k0 = fl.k, entry = fl.px;
       const k1 = lowerBound(t1, t1[k0] + p.max_hold_min * MIN, k0);
-      const lo = sg > 0 ? d1.l : negLo, hi = sg > 0 ? d1.h : negHi, cl = sg > 0 ? d1.c : negC;
-      const entry = sg * d1.o[k0], sl = sg * st.sl, risk = entry - sl;
+      const risk = entry - sl;
       if (!(risk > 0)) continue;
       const rh = sg > 0 ? st.range_high : -st.range_low, rl = sg > 0 ? st.range_low : -st.range_high;
-      const height = rh - rl, top = sg * st.impulse_top, cost = p.cost;
+      const height = rh - rl, top = sg * st.impulse_top, cost = p.cost, a = st.atr;
       for (const v of VARIANTS) {
-        let tp = null;
+        let tp = NaN, R, ex;
         if (v.kind === "level") tp = top;
         else if (v.kind === "proj") tp = rh + v.mult * height;
         else if (v.kind === "r") tp = entry + v.r * risk;
         if ((v.kind === "level" || v.kind === "proj") && tp - entry < p.min_rr * risk) continue;
-        let R, ex;
-        if (v.kind !== "partial") {
+        if (v.kind === "level" || v.kind === "proj" || v.kind === "r") {
           ex = exitLong(lo, hi, cl, k0, k1, sl, tp);
           R = (ex.px - entry - cost) / risk;
-        } else {
-          const tp1 = entry + v.r * risk;
+        } else if (v.kind === "partial") {
+          const tp1 = entry + v.r * risk; tp = tp1;
           ex = exitLong(lo, hi, cl, k0, k1, sl, tp1);
           if (ex.why !== "TP") R = (ex.px - entry - cost) / risk;
           else {
@@ -363,12 +445,24 @@
               tp = finalTp;
             }
           }
-          if (tp === null) tp = tp1;
+        } else {
+          const act = entry + p.trail_start_R * risk;
+          let candAt;
+          if (v.kind === "trail_atr") candAt = (i, run) => run - p.trail_atr * a;
+          else {
+            if (!struct[st.side]) continue;
+            const S = struct[st.side];
+            candAt = (i) => { const b = Math.max(bOf[i] - 1, 0); return S.idx[b] > st.signal_bar ? S.lvl[b] - p.sl_buffer_atr * a : -Infinity; };
+          }
+          ex = exitTrailing(op, lo, hi, cl, k0, k1, entry, sl, candAt, act);
+          tp = ex.stop;
+          R = (ex.px - entry - cost) / risk;
         }
-        rows.push({ setup: st, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
-          sl: st.sl, tp: sg * tp, risk, exit_time: t1[ex.idx], exit_reason: ex.why, R, cost_R: cost / risk });
+        rows.push({ setup: st0, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
+          sl: st.sl, tp: isFinite(tp) ? sg * tp : NaN, risk, exit_time: t1[ex.idx], exit_reason: ex.why, R, cost_R: cost / risk });
       }
     }
+    rows.notFilled = notFilled;
     return rows;
   }
 
@@ -399,12 +493,12 @@
 
   function run(d1, dTF, p) {
     const { setups, funnels } = detect(dTF, d1, p);
-    const trades = simulate(setups, d1, p);
+    const trades = simulate(setups, d1, p, dTF);
     const splitTime = d1.t[Math.floor(d1.t.length * p.split)];
-    return { setups, funnels, trades, splitTime };
+    return { setups, funnels, trades, splitTime, notFilled: trades.notFilled };
   }
 
-  const api = { parseCSV, clean, resample, atr, poc, detect, simulate, metrics, sessionOf, run, nyMinuteOfDay, DEFAULTS, VARIANTS, MIN };
+  const api = { pivots, parseCSV, clean, resample, atr, poc, detect, simulate, metrics, sessionOf, run, nyMinuteOfDay, DEFAULTS, VARIANTS, MIN };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.AMD = api;
 })(typeof window !== "undefined" ? window : globalThis);

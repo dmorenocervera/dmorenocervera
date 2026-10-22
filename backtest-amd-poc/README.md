@@ -3,11 +3,11 @@
 Setup de **Acumulación → Manipulación → Distribución** con entrada en el retesteo del PoC del rango:
 
 1. **Contexto**: impulso fuerte previo (opcional).
-2. **Acumulación**: rango lateral. Se calcula su Volume Profile (rango fijo, con velas de 1m) y su **PoC**.
+2. **Acumulación**: rango lateral con al menos 2 máximos (pivotes) en su zona alta y 2 mínimos en su zona baja. Se calcula su Volume Profile (rango fijo, con velas de 1m) y su **PoC**.
 3. **Manipulación**: el precio barre la liquidez del lado contrario (SSL bajo el rango para largos).
 4. **Recuperación**: cierre de nuevo por encima del PoC en ≤ N velas.
-5. **Entrada**: retesteo del PoC con una vela que lo perfora con mecha y cierra por encima. SL bajo el mínimo local del retesteo.
-6. **Salida**: se comparan 7 variantes de TP (origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE + resto al origen del impulso).
+5. **Entrada** (`--entry-mode`): `close` = a mercado tras la vela de reacción (mecha que perfora el PoC y cierre por encima); `break` = orden stop en el máximo de esa vela; `limit` = orden límite en el PoC al primer toque. SL bajo el mínimo local del retesteo (o PoC − x·ATR en `limit`).
+6. **Salida**: se comparan 9 variantes (origen del impulso, proyección del rango x1/x2, 2R/3R/5R, parcial 50 % a 2R + BE, trailing ATR y trailing por estructura).
 
 Los cortos son el espejo exacto (barrido del BSL y retesteo del PoC como resistencia).
 
