@@ -48,3 +48,7 @@ Todos los umbrales del detector están en `Params` (`amd/strategy.py`).
 ```bash
 python -m pytest -q
 ```
+
+## Dashboard interactivo
+
+`dashboard/index.html` + `dashboard/engine.js`: el mismo motor portado a JavaScript (resultados idénticos a Python) que se ejecuta en el navegador. Cargas un CSV de velas de 1m, ajustas los parámetros por fase y ves al momento métricas, curva de equity, embudo del setup, desglose y el gráfico de cada operación. Se abre directamente en el navegador, sin servidor.

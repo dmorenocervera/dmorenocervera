@@ -1,0 +1,602 @@
+<title>Laboratorio AMD + PoC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: carril izquierdo con los parámetros ordenados por fase del setup; a la derecha, resumen -> comparativa -> detalle */
+:root {
+  --bg: #f4f6f9; --surface: #ffffff; --sunken: #eef1f5; --ink: #18202c; --muted: #5b6577; --line: #dde2ea;
+  --accent: #9a5d00; --accent-soft: #f6ead6; --poc: #b0306a; --up: #1d7f67; --down: #c03f37; --warn: #a86a00;
+  --up-soft: #e2f2ec; --down-soft: #f9e5e3; --warn-soft: #fbf0d9;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11151c; --surface: #181e27; --sunken: #141922; --ink: #e5e9f0; --muted: #96a1b3; --line: #2a3341;
+  --accent: #e3a43c; --accent-soft: #3a2d17; --poc: #e65d98; --up: #43c29d; --down: #f0695e; --warn: #e8b04a;
+  --up-soft: #173229; --down-soft: #3a1d1b; --warn-soft: #3a2f17; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #181e27; --sunken: #141922; --ink: #e5e9f0; --muted: #96a1b3; --line: #2a3341;
+  --accent: #e3a43c; --accent-soft: #3a2d17; --poc: #e65d98; --up: #43c29d; --down: #f0695e; --warn: #e8b04a;
+  --up-soft: #173229; --down-soft: #3a1d1b; --warn-soft: #3a2f17; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--f-body); }
+.wrap { max-width: 1440px; margin: 0 auto; padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; margin-bottom: 16px }
+h1 { font: 600 26px/1.1 var(--f-display); letter-spacing: -0.01em; margin: 0; text-wrap: balance }
+h1 small { display: block; font: 400 13px/1.4 var(--f-body); color: var(--muted); letter-spacing: 0; margin-top: 4px }
+h2 { font: 600 15px/1.2 var(--f-display); letter-spacing: 0.02em; text-transform: uppercase; margin: 0; color: var(--ink) }
+.mono, td.n, .kpi b { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+
+.grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 20px; align-items: start }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr) } }
+
+/* Panel de parámetros */
+aside { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; position: sticky; top: calc(12px + env(safe-area-inset-top, 0px));
+  max-height: calc(100vh - 24px); overflow: auto }
+@media (max-width: 900px) { aside { position: static; max-height: none } }
+.src { padding: 14px; border-bottom: 1px solid var(--line); display: grid; gap: 10px }
+.drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 12px; text-align: center; color: var(--muted); cursor: pointer; font-size: 13px }
+.drop:hover, .drop.over { border-color: var(--accent); color: var(--ink) }
+.drop strong { color: var(--ink) }
+.datainfo { font-size: 12px; color: var(--muted) }
+.datainfo b { color: var(--ink); font-weight: 500 }
+details.phase { border-bottom: 1px solid var(--line) }
+details.phase > summary { list-style: none; cursor: pointer; padding: 12px 14px; display: flex; gap: 10px; align-items: baseline }
+details.phase > summary::-webkit-details-marker { display: none }
+details.phase > summary .ix { font: 500 12px var(--f-mono); color: var(--accent) }
+details.phase > summary .t { font: 600 14px var(--f-display); letter-spacing: .02em; text-transform: uppercase }
+details.phase > summary .chev { margin-left: auto; color: var(--muted); transition: transform .15s }
+details.phase[open] > summary .chev { transform: rotate(90deg) }
+.fields { padding: 0 14px 14px; display: grid; gap: 10px }
+.f { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 2px 10px; align-items: center }
+.f label { font-size: 13px }
+.f .h { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); line-height: 1.35 }
+.f input[type=number], .f select { width: 100%; font: 13px var(--f-mono); padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); color: var(--ink) }
+.f input:focus-visible, .f select:focus-visible, button:focus-visible, .drop:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.f.sw { grid-template-columns: minmax(0, 1fr) auto }
+.f.dis { opacity: .45 }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden }
+.seg button { flex: 1; border: 0; background: var(--sunken); color: var(--muted); font: 500 12.5px var(--f-body); padding: 6px 8px; cursor: pointer }
+.seg button[aria-pressed=true] { background: var(--accent); color: var(--surface) }
+.actions { display: flex; gap: 8px; padding: 14px; flex-wrap: wrap }
+button.b { font: 500 13px var(--f-body); padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer }
+button.b:hover { border-color: var(--accent) }
+button.b.pri { background: var(--accent); color: var(--surface); border-color: var(--accent) }
+
+/* Contenido */
+main { display: grid; gap: 20px; min-width: 0 }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0 }
+.card > .hd { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px }
+.card > .hd p { margin: 0; color: var(--muted); font-size: 12.5px }
+.banner { border-radius: 8px; padding: 10px 14px; font-size: 13px; background: var(--warn-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent) }
+.status { font: 12px var(--f-mono); color: var(--muted) }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden }
+@media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+.kpi { background: var(--surface); padding: 12px 14px; display: grid; gap: 2px }
+.kpi span { font-size: 11.5px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase }
+.kpi b { font-size: 22px; font-weight: 500 }
+.kpi i { font-style: normal; font-size: 12px; color: var(--muted) }
+.pos { color: var(--up) } .neg { color: var(--down) }
+.chips { display: flex; gap: 6px; flex-wrap: wrap }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 99px; border: 1px solid transparent }
+.chip.good { background: var(--up-soft); color: var(--up) } .chip.bad { background: var(--down-soft); color: var(--down) } .chip.warn { background: var(--warn-soft); color: var(--warn) }
+
+.tbl { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: 13px }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap }
+th { font: 500 11.5px var(--f-body); color: var(--muted); text-transform: uppercase; letter-spacing: .03em; background: var(--sunken) }
+th:first-child, td:first-child { text-align: left }
+tbody tr.sel { background: var(--accent-soft) }
+tbody tr.click { cursor: pointer }
+tbody tr.click:hover { background: var(--sunken) }
+tbody tr.sel:hover { background: var(--accent-soft) }
+.bar { display: inline-block; height: 8px; border-radius: 2px; vertical-align: middle; margin-right: 6px }
+
+canvas { width: 100%; display: block }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 8px }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px }
+.funnel { display: grid; gap: 6px }
+.fr { display: grid; grid-template-columns: 170px minmax(0, 1fr) 90px; gap: 10px; align-items: center; font-size: 13px }
+@media (max-width: 520px) { .fr { grid-template-columns: 120px minmax(0, 1fr) 70px; font-size: 12px } }
+.fr .track { background: var(--sunken); border-radius: 3px; height: 16px; overflow: hidden }
+.fr .fill { height: 100%; background: var(--accent); border-radius: 3px }
+.fr .fill.lost { background: color-mix(in srgb, var(--muted) 45%, transparent) }
+.fr .v { font: 12px var(--f-mono); text-align: right; color: var(--muted) }
+.fr .v b { color: var(--ink); font-weight: 500 }
+
+.trades { max-height: 420px; overflow: auto }
+.empty { color: var(--muted); padding: 24px 8px; text-align: center }
+footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Laboratorio AMD + PoC<small>Acumulación → manipulación → retesteo del PoC. Ajusta las reglas y el backtest se recalcula al momento en tu navegador.</small></h1>
+    <span class="status" id="status">Sin datos</span>
+  </header>
+
+  <div class="grid">
+    <aside aria-label="Parámetros">
+      <div class="src">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Cargar CSV de velas de 1 minuto">
+          <strong>Carga un CSV de velas de 1 minuto</strong><br>Arrástralo aquí o haz clic. TradingView, MT5, Dukascopy…
+        </div>
+        <input type="file" id="file" accept=".csv,.txt,text/csv" hidden>
+        <div class="f"><label for="tz">Zona horaria del CSV</label>
+          <select id="tz"><option value="UTC">UTC</option><option value="America/New_York">Nueva York</option><option value="Europe/Madrid">Madrid</option><option value="Europe/London">Londres</option></select>
+          <span class="h">Solo se usa si las fechas del archivo no llevan zona. Importa para el modo apertura NY.</span></div>
+        <div class="datainfo" id="datainfo"></div>
+        <button class="b" id="demo" type="button">Cargar datos de demostración</button>
+      </div>
+      <div id="params"></div>
+      <div class="actions">
+        <button class="b" id="reset" type="button">Restaurar valores</button>
+        <button class="b" id="copy" type="button">Copiar parámetros</button>
+      </div>
+    </aside>
+
+    <main>
+      <div class="banner" id="demoBanner" hidden>Estás viendo <b>datos de demostración generados al azar</b> para probar el panel. Los resultados no dicen nada de la estrategia. Carga un CSV real para evaluarla.</div>
+
+      <section class="card" aria-labelledby="h-sum">
+        <div class="hd"><h2 id="h-sum">Resumen · <span id="selName"></span></h2><div class="chips" id="chips"></div></div>
+        <div class="kpis" id="kpis"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-var">
+        <div class="hd"><h2 id="h-var">Variantes de salida</h2><p>Haz clic en una fila para ver su detalle. Resultados en R, con costes.</p></div>
+        <div class="tbl" id="variants"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-eq">
+        <div class="hd"><h2 id="h-eq">Curva de equity</h2><p>R acumulado por operación. La línea discontinua separa dentro y fuera de muestra.</p></div>
+        <canvas id="eq" height="280"></canvas>
+        <div class="legend" id="eqLegend"></div>
+      </section>
+
+      <div class="two">
+        <section class="card" aria-labelledby="h-fun">
+          <div class="hd"><h2 id="h-fun">Embudo del setup</h2><p>Largos + cortos</p></div>
+          <div class="funnel" id="funnel"></div>
+        </section>
+        <section class="card" aria-labelledby="h-brk">
+          <div class="hd"><h2 id="h-brk">Desglose</h2>
+            <div class="seg" id="brkSeg" role="group" aria-label="Agrupar por">
+              <button type="button" data-k="sample" aria-pressed="true">Muestra</button><button type="button" data-k="side" aria-pressed="false">Lado</button><button type="button" data-k="session" aria-pressed="false">Sesión</button><button type="button" data-k="year" aria-pressed="false">Año</button>
+            </div></div>
+          <div class="tbl" id="breakdown"></div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="h-set">
+        <div class="hd"><h2 id="h-set">Setup</h2><p id="setTitle">Elige una operación de la lista</p></div>
+        <canvas id="chart" height="340"></canvas>
+        <div class="legend"><span><i style="background:var(--poc)"></i>PoC</span><span><i style="background:var(--muted);opacity:.4;height:8px"></i>Rango</span><span><i style="background:var(--down)"></i>SL</span><span><i style="background:var(--up)"></i>TP</span><span><i style="background:var(--accent)"></i>Entrada / salida</span></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-tr">
+        <div class="hd"><h2 id="h-tr">Operaciones</h2><p id="trCount"></p></div>
+        <div class="trades tbl" id="trades"></div>
+      </section>
+    </main>
+  </div>
+  <footer>Entrada en la apertura de la vela siguiente a la señal. Salidas simuladas con velas de 1 minuto; si SL y TP caen en el mismo minuto, cuenta como SL. Los cortos son el patrón espejo. Mismo motor que <code>backtest-amd-poc/</code> en el repositorio. Un t-stat por debajo de 2 o menos de ~30 operaciones no permite distinguir una ventaja del azar.</footer>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function () {
+"use strict";
+const A = window.AMD;
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ---------- Definición de parámetros (por fase del setup) ----------
+const PHASES = [
+  { ix: "00", t: "Mercado y costes", open: true, f: [
+    { k: "tf", l: "Temporalidad", type: "select", opts: [[1,"1 min"],[5,"5 min"],[15,"15 min"],[30,"30 min"],[60,"1 h"]] },
+    { k: "mode", l: "Modo", type: "seg", opts: [["general","General"],["ny","Apertura NY"]], h: "Apertura NY: el rango llega intacto a las 9:30 ET y el barrido ocurre en la ventana de apertura." },
+    { k: "long", l: "Largos", type: "bool" }, { k: "short", l: "Cortos", type: "bool" },
+    { k: "cost", l: "Coste ida+vuelta", step: 0.01, min: 0, h: "En unidades de precio: spread + comisión + slippage. Oro ≈ 0,3–0,5; NQ ≈ 0,5–1,5 puntos." },
+    { k: "split", l: "Dentro de muestra", step: 0.05, min: 0.1, max: 0.95, h: "Fracción inicial del histórico. El resto se trata como fuera de muestra." },
+  ]},
+  { ix: "01", t: "Contexto y acumulación", f: [
+    { k: "require_impulse", l: "Exigir impulso previo", type: "bool" },
+    { k: "impulse_bars", l: "Ventana del impulso", step: 1, min: 2, h: "Velas antes del rango donde se busca el impulso.", dep: "require_impulse" },
+    { k: "impulse_atr", l: "Impulso mínimo (ATR)", step: 0.5, min: 0, dep: "require_impulse" },
+    { k: "range_max_frac", l: "Rango máx. / impulso", step: 0.05, min: 0.05, h: "Altura del rango como fracción del impulso.", dep: "require_impulse" },
+    { k: "range_min_bars", l: "Velas mínimas del rango", step: 1, min: 3 },
+    { k: "range_max_bars", l: "Velas máximas del rango", step: 5, min: 5 },
+    { k: "range_max_atr", l: "Altura máx. del rango (ATR)", step: 0.5, min: 0.5 },
+    { k: "atr_len", l: "Periodo ATR", step: 1, min: 5 },
+    { k: "poc_bins", l: "Niveles del perfil", step: 5, min: 10, h: "Resolución del Volume Profile para calcular el PoC." },
+  ]},
+  { ix: "02", t: "Manipulación", f: [
+    { k: "sweep_min", l: "Barrido mínimo", step: 0.05, min: 0, h: "Profundidad bajo el rango, en fracción de su altura." },
+    { k: "sweep_max", l: "Barrido máximo", step: 0.1, min: 0.1, h: "Más profundo = ruptura real, se descarta." },
+    { k: "reclaim_max_bars", l: "Velas para recuperar el PoC", step: 1, min: 1 },
+    { k: "open_window_min", l: "Ventana de apertura (min)", step: 15, min: 15, dep: "ny" },
+  ]},
+  { ix: "03", t: "Retesteo y entrada", f: [
+    { k: "retest_max_bars", l: "Velas máx. hasta el retesteo", step: 1, min: 1 },
+    { k: "touch_tol_atr", l: "Tolerancia de toque (ATR)", step: 0.05, min: 0 },
+    { k: "wick_frac", l: "Mecha mínima", step: 0.05, min: 0, max: 1, h: "Mecha inferior como fracción del rango de la vela de reacción." },
+    { k: "inval_close_atr", l: "Cierre que invalida (ATR)", step: 0.05, min: 0, h: "Un cierre por debajo de PoC − x·ATR anula el setup." },
+    { k: "entry_touch", l: "Entrar en la reacción nº", type: "select", opts: [[1,"1ª"],[2,"2ª"],[3,"3ª"]] },
+    { k: "sl_buffer_atr", l: "Margen del SL (ATR)", step: 0.05, min: 0 },
+    { k: "min_risk_atr", l: "SL mínimo (ATR)", step: 0.05, min: 0 },
+  ]},
+  { ix: "04", t: "Salida", f: [
+    { k: "min_rr", l: "R:R mínimo del objetivo", step: 0.25, min: 0, h: "Para las variantes de nivel (origen del impulso, rango ×N): si el objetivo da menos, no se opera." },
+    { k: "max_hold_h", l: "Tiempo máximo (horas)", step: 1, min: 1 },
+  ]},
+];
+
+const DEF = { ...A.DEFAULTS, mode: "general", max_hold_h: A.DEFAULTS.max_hold_min / 60 };
+let P = { ...DEF };
+try { const s = JSON.parse(localStorage.getItem("amd-params") || "null"); if (s) P = { ...DEF, ...s }; } catch (e) {}
+
+// ---------- Construcción del formulario ----------
+function buildForm() {
+  const box = $("params"); box.innerHTML = "";
+  for (const ph of PHASES) {
+    const d = document.createElement("details"); d.className = "phase"; d.open = !!ph.open;
+    d.innerHTML = `<summary><span class="ix">${ph.ix}</span><span class="t">${ph.t}</span><span class="chev" aria-hidden="true">›</span></summary>`;
+    const fs = document.createElement("div"); fs.className = "fields";
+    for (const f of ph.f) {
+      const w = document.createElement("div"); w.className = "f" + (f.type === "bool" ? " sw" : ""); w.dataset.k = f.k; if (f.dep) w.dataset.dep = f.dep;
+      const id = "p_" + f.k;
+      let ctl;
+      if (f.type === "select") ctl = `<select id="${id}">${f.opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select>`;
+      else if (f.type === "bool") ctl = `<input type="checkbox" id="${id}">`;
+      else if (f.type === "seg") ctl = "";
+      else ctl = `<input type="number" id="${id}" step="${f.step}"${f.min != null ? ` min="${f.min}"` : ""}${f.max != null ? ` max="${f.max}"` : ""}>`;
+      if (f.type === "seg") {
+        w.style.gridTemplateColumns = "minmax(0,1fr)";
+        w.innerHTML = `<label>${f.l}</label><div class="seg" role="group" id="${id}">${f.opts.map(([v, t]) => `<button type="button" data-v="${v}" aria-pressed="false">${t}</button>`).join("")}</div>${f.h ? `<span class="h">${f.h}</span>` : ""}`;
+      } else w.innerHTML = `<label for="${id}">${f.l}</label>${ctl}${f.h ? `<span class="h">${f.h}</span>` : ""}`;
+      fs.appendChild(w);
+    }
+    d.appendChild(fs); box.appendChild(d);
+  }
+  box.addEventListener("input", onParam); box.addEventListener("change", onParam);
+  box.addEventListener("click", (e) => { const b = e.target.closest(".seg button"); if (!b) return; P.mode = b.dataset.v; syncForm(); schedule(); });
+  syncForm();
+}
+function syncForm() {
+  for (const ph of PHASES) for (const f of ph.f) {
+    const el = $("p_" + f.k);
+    if (f.type === "bool") el.checked = !!P[f.k];
+    else if (f.type === "seg") el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === P[f.k])));
+    else el.value = P[f.k];
+  }
+  document.querySelectorAll("[data-dep]").forEach((w) => {
+    const on = w.dataset.dep === "ny" ? P.mode === "ny" : !!P[w.dataset.dep];
+    w.classList.toggle("dis", !on); w.querySelectorAll("input,select").forEach((i) => (i.disabled = !on));
+  });
+}
+function onParam(e) {
+  const w = e.target.closest(".f"); if (!w || !w.dataset.k) return;
+  const k = w.dataset.k, el = e.target;
+  if (el.type === "checkbox") P[k] = el.checked;
+  else if (el.tagName === "SELECT") P[k] = +el.value;
+  else { const v = parseFloat(el.value); if (!isFinite(v)) return; P[k] = v; }
+  syncForm(); schedule();
+}
+function engineParams() {
+  const p = { ...P, ny_open: P.mode === "ny", max_hold_min: Math.round(P.max_hold_h * 60) };
+  for (const k of ["impulse_bars", "range_min_bars", "range_max_bars", "atr_len", "poc_bins", "reclaim_max_bars", "retest_max_bars", "entry_touch", "open_window_min", "tf"]) p[k] = Math.max(1, Math.round(p[k]));
+  return p;
+}
+
+// ---------- Datos ----------
+let D1 = null, TF = {}, DATA_NAME = "", R = null, SEL = "C_3R", SEL_TRADE = null, BRK = "sample";
+
+function setData(d, name, demo) {
+  D1 = d; TF = {}; DATA_NAME = name; SEL_TRADE = null;
+  $("demoBanner").hidden = !demo;
+  const n = d.t.length, f = (t) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
+  const dts = []; for (let i = 1; i < Math.min(n, 2000); i++) dts.push(d.t[i] - d.t[i - 1]);
+  dts.sort((a, b) => a - b); const med = dts[dts.length >> 1] / 60000;
+  $("datainfo").innerHTML = `<b>${esc(name)}</b><br>${n.toLocaleString("es-ES")} velas · ${f(d.t[0])} → ${f(d.t[n - 1])} UTC<br>` +
+    (med > 1.5 ? `<span class="neg">Las velas son de ~${med.toFixed(0)} min, no de 1 min: PoC y salidas serán aproximados.</span><br>` : "") +
+    (d.hasVol ? "Con volumen" : "<span class='neg'>Sin volumen: el PoC se calcula por tiempo (TPO).</span>");
+  schedule(0);
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+
+function loadFile(file) {
+  $("status").textContent = "Leyendo " + file.name + "…";
+  const fr = new FileReader();
+  fr.onload = () => {
+    setTimeout(() => {
+      try { setData(A.parseCSV(fr.result, $("tz").value), file.name, false); }
+      catch (err) { $("status").textContent = "No se pudo leer el CSV"; $("datainfo").innerHTML = `<span class="neg">${esc(err.message)}</span>`; }
+    }, 20);
+  };
+  fr.readAsText(file);
+}
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", (e) => e.target.files[0] && loadFile(e.target.files[0]));
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+
+function demoData() {
+  // Paseo aleatorio con colas gruesas, 1m, 90 días (semilla fija)
+  let s = 7; const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+  const n = 60 * 24 * 90, t0 = Date.UTC(2025, 0, 6);
+  const t = new Float64Array(n), o = new Float64Array(n), h = new Float64Array(n), l = new Float64Array(n), c = new Float64Array(n), v = new Float64Array(n);
+  let px = 2650, vol = 0.3;
+  for (let i = 0; i < n; i++) {
+    vol = 0.97 * vol + 0.03 * 0.3 + 0.02 * Math.abs(gauss()) * 0.3;
+    const nx = px + gauss() * vol;
+    t[i] = t0 + i * 60000; o[i] = px; c[i] = nx;
+    h[i] = Math.max(px, nx) + Math.abs(gauss()) * 0.12; l[i] = Math.min(px, nx) - Math.abs(gauss()) * 0.12;
+    v[i] = 20 + Math.floor(rnd() * 80 * (1 + vol)); px = nx;
+  }
+  return { t, o, h, l, c, v, hasVol: true };
+}
+$("demo").addEventListener("click", () => setData(demoData(), "Demo · paseo aleatorio", true));
+
+// ---------- Ejecución ----------
+let timer = null;
+function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runNow, ms); try { localStorage.setItem("amd-params", JSON.stringify(P)); } catch (e) {} }
+function runNow() {
+  if (!D1) return;
+  const p = engineParams();
+  $("status").textContent = "Calculando…";
+  setTimeout(() => {
+    const t0 = performance.now();
+    const dTF = TF[p.tf] || (TF[p.tf] = A.resample(D1, p.tf));
+    R = A.run(D1, dTF, p); R.dTF = dTF;
+    const ms = performance.now() - t0;
+    const nSet = R.setups.length;
+    $("status").textContent = `${nSet} setups · ${Math.round(ms)} ms`;
+    if (SEL_TRADE && !R.trades.includes(SEL_TRADE)) SEL_TRADE = null;
+    render();
+  }, 10);
+}
+
+// ---------- Utilidades de formato ----------
+const fmt = {
+  R: (x) => (x == null || !isFinite(x) ? "–" : (x >= 0 ? "+" : "") + x.toFixed(2)),
+  pct: (x) => (x == null || !isFinite(x) ? "–" : (x * 100).toFixed(1) + " %"),
+  pf: (x) => (x === Infinity ? "∞" : x == null || !isFinite(x) ? "–" : x.toFixed(2)),
+  num: (x, d = 2) => (x == null || !isFinite(x) ? "–" : x.toFixed(d)),
+  date: (t) => new Date(t).toISOString().slice(0, 16).replace("T", " "),
+};
+const cls = (x) => (x > 0 ? "pos" : x < 0 ? "neg" : "");
+function byVariant() { const m = {}; for (const v of A.VARIANTS) m[v.id] = []; for (const t of R.trades) m[t.variant].push(t); return m; }
+const vLabel = (id) => (A.VARIANTS.find((v) => v.id === id) || {}).label || id;
+
+// ---------- Render ----------
+function render() {
+  const bv = byVariant();
+  if (!bv[SEL]) SEL = "C_3R";
+  renderSummary(bv[SEL]);
+  renderVariants(bv);
+  drawEquity(bv);
+  renderFunnel();
+  renderBreakdown(bv[SEL]);
+  renderTrades(bv[SEL]);
+  drawSetup();
+}
+
+function maxLosing(tr) {
+  let cur = 0, mx = 0;
+  for (const t of tr.slice().sort((a, b) => a.entry_time - b.entry_time)) { cur = t.R <= 0 ? cur + 1 : 0; mx = Math.max(mx, cur); }
+  return mx;
+}
+function renderSummary(tr) {
+  $("selName").textContent = vLabel(SEL);
+  const m = A.metrics(tr.map((t) => t.R));
+  const ins = A.metrics(tr.filter((t) => t.entry_time < R.splitTime).map((t) => t.R));
+  const oos = A.metrics(tr.filter((t) => t.entry_time >= R.splitTime).map((t) => t.R));
+  const k = (lab, val, sub, c = "") => `<div class="kpi"><span>${lab}</span><b class="${c}">${val}</b><i>${sub}</i></div>`;
+  $("kpis").innerHTML = !m.trades ? `<div class="kpi"><span>Operaciones</span><b>0</b><i>Ningún setup cumple las reglas</i></div>` :
+    k("Operaciones", m.trades, `${(m.trades / Math.max(1, (D1.t[D1.t.length - 1] - D1.t[0]) / (30.4 * 864e5))).toFixed(1)} al mes`) +
+    k("Acierto", fmt.pct(m.win_rate), `${Math.round(m.win_rate * m.trades)} ganadoras`) +
+    k("Esperanza", fmt.R(m.avg_R) + " R", "por operación", cls(m.avg_R)) +
+    k("Profit factor", fmt.pf(m.profit_factor), "ganancia / pérdida bruta", m.profit_factor >= 1 ? "pos" : "neg") +
+    k("Total", fmt.R(m.total_R) + " R", `${fmt.pct(m.ret_1pct_risk)} arriesgando 1 %`, cls(m.total_R)) +
+    k("Drawdown máx.", fmt.num(m.max_dd_R, 1) + " R", "pico a valle", "neg") +
+    k("Racha perdedora", maxLosing(tr) + " ops", "máximo de pérdidas seguidas", "neg") +
+    k("Fuera de muestra", oos.trades ? fmt.R(oos.avg_R) + " R" : "–", `${oos.trades || 0} ops · dentro ${ins.trades ? fmt.R(ins.avg_R) : "–"} R`, cls(oos.avg_R || 0));
+  const chips = [];
+  if (m.trades && m.trades < 30) chips.push(["warn", "Muestra pequeña"]);
+  if (m.trades >= 30 && m.t_stat >= 2) chips.push(["good", `Significativo · t = ${m.t_stat.toFixed(1)}`]);
+  else if (m.trades) chips.push(["warn", `No significativo · t = ${fmt.num(m.t_stat, 1)}`]);
+  if (ins.trades && oos.trades) chips.push(Math.sign(ins.avg_R) === Math.sign(oos.avg_R) && oos.avg_R > 0 ? ["good", "Se mantiene fuera de muestra"] : ["bad", "No se mantiene fuera de muestra"]);
+  $("chips").innerHTML = chips.map(([c, t]) => `<span class="chip ${c}">${t}</span>`).join("");
+}
+
+function renderVariants(bv) {
+  const rows = A.VARIANTS.map((v) => {
+    const tr = bv[v.id], m = A.metrics(tr.map((t) => t.R));
+    const o = A.metrics(tr.filter((t) => t.entry_time >= R.splitTime).map((t) => t.R));
+    return `<tr class="click${v.id === SEL ? " sel" : ""}" data-v="${v.id}" tabindex="0"><td>${v.label}</td><td class="n">${m.trades}</td><td class="n">${fmt.pct(m.win_rate)}</td>
+      <td class="n ${cls(m.avg_R)}">${fmt.R(m.avg_R)}</td><td class="n">${fmt.pf(m.profit_factor)}</td><td class="n ${cls(m.total_R)}">${fmt.R(m.total_R)}</td>
+      <td class="n">${fmt.num(m.max_dd_R, 1)}</td><td class="n">${fmt.num(m.t_stat, 2)}</td><td class="n ${cls(o.avg_R || 0)}">${o.trades ? fmt.R(o.avg_R) : "–"}</td></tr>`;
+  }).join("");
+  $("variants").innerHTML = `<table><thead><tr><th>Salida</th><th>Ops</th><th>Acierto</th><th>Esperanza R</th><th>PF</th><th>Total R</th><th>DD máx R</th><th>t-stat</th><th>Fuera muestra R</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+$("variants").addEventListener("click", (e) => { const r = e.target.closest("tr[data-v]"); if (r) { SEL = r.dataset.v; SEL_TRADE = null; render(); } });
+$("variants").addEventListener("keydown", (e) => { const r = e.target.closest("tr[data-v]"); if (r && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); SEL = r.dataset.v; SEL_TRADE = null; render(); } });
+
+// ---------- Canvas ----------
+function prep(cv, hCss) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(hCss * dpr); cv.style.height = hCss + "px";
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, hCss);
+  return { g, w, h: hCss };
+}
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n) || 10 * mag;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function drawEquity(bv) {
+  const cv = $("eq"), { g, w, h } = prep(cv, cv.clientWidth < 500 ? 220 : 280);
+  const pad = { l: 46, r: 12, t: 12, b: 26 };
+  const series = A.VARIANTS.map((v) => {
+    const tr = bv[v.id].slice().sort((a, b) => a.entry_time - b.entry_time);
+    let s = 0; return { id: v.id, pts: tr.map((t) => [t.entry_time, (s += t.R)]) };
+  });
+  const all = series.flatMap((s) => s.pts);
+  g.font = "11px " + css("--f-mono"); g.textBaseline = "middle";
+  if (!all.length) { g.fillStyle = css("--muted"); g.textAlign = "center"; g.fillText("Sin operaciones", w / 2, h / 2); $("eqLegend").innerHTML = ""; return; }
+  const x0 = D1.t[0], x1 = D1.t[D1.t.length - 1];
+  let y0 = Math.min(0, ...all.map((p) => p[1])), y1 = Math.max(0, ...all.map((p) => p[1]));
+  const yp = (y1 - y0) * 0.08 || 1; y0 -= yp; y1 += yp;
+  const X = (t) => pad.l + ((t - x0) / (x1 - x0)) * (w - pad.l - pad.r), Y = (v) => pad.t + (1 - (v - y0) / (y1 - y0)) * (h - pad.t - pad.b);
+  g.strokeStyle = css("--line"); g.lineWidth = 1; g.fillStyle = css("--muted"); g.textAlign = "right";
+  for (const v of niceTicks(y0, y1)) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(w - pad.r, Y(v)); g.stroke(); g.fillText(v.toString(), pad.l - 6, Y(v)); }
+  g.strokeStyle = css("--muted"); g.beginPath(); g.moveTo(pad.l, Y(0)); g.lineTo(w - pad.r, Y(0)); g.stroke();
+  // eje X por meses
+  g.textAlign = "center"; g.textBaseline = "top";
+  const months = []; const d = new Date(x0); d.setUTCDate(1); d.setUTCHours(0, 0, 0, 0);
+  while (d.getTime() <= x1) { d.setUTCMonth(d.getUTCMonth() + 1); months.push(d.getTime()); }
+  const every = Math.max(1, Math.ceil(months.length / Math.max(2, Math.floor((w - 60) / 70))));
+  months.forEach((m, i) => { if (m <= x1 && i % every === 0) g.fillText(new Date(m).toISOString().slice(0, 7), X(m), h - pad.b + 8); });
+  // división dentro/fuera de muestra
+  const sx = X(R.splitTime); g.setLineDash([4, 4]); g.strokeStyle = css("--muted"); g.beginPath(); g.moveTo(sx, pad.t); g.lineTo(sx, h - pad.b); g.stroke(); g.setLineDash([]);
+  g.textAlign = "left"; g.textBaseline = "top"; g.fillText("fuera de muestra →", sx + 4, pad.t);
+  const draw = (s, col, lw) => { if (!s.pts.length) return; g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); g.moveTo(X(s.pts[0][0]), Y(0)); for (const [t, v] of s.pts) g.lineTo(X(t), Y(v)); g.stroke(); };
+  const faint = css("--muted");
+  g.globalAlpha = 0.35; series.filter((s) => s.id !== SEL).forEach((s) => draw(s, faint, 1)); g.globalAlpha = 1;
+  const sel = series.find((s) => s.id === SEL); draw(sel, css("--accent"), 2.2);
+  if (sel.pts.length) { const [t, v] = sel.pts[sel.pts.length - 1]; g.fillStyle = css("--accent"); g.beginPath(); g.arc(X(t), Y(v), 3.5, 0, 7); g.fill(); }
+  $("eqLegend").innerHTML = `<span><i style="background:var(--accent)"></i>${vLabel(SEL)}</span><span><i style="background:var(--muted);opacity:.4"></i>Resto de variantes</span>`;
+}
+
+function renderFunnel() {
+  const f = {}; for (const s of Object.values(R.funnels)) for (const [k, v] of Object.entries(s)) f[k] = (f[k] || 0) + v;
+  const ny = engineParams().ny_open;
+  const steps = [
+    ["Rangos detectados", f.ranges],
+    ...(ny ? [["Rotos fuera de la apertura", f.outside_open_window, true]] : []),
+    ["Rotos por el lado contrario", f.broke_wrong_side, true],
+    ["Barren liquidez", f.swept],
+    ["Barrido demasiado profundo", f.sweep_too_deep, true],
+    ["Barrido insuficiente", f.sweep_too_shallow, true],
+    ["No recuperan el PoC a tiempo", f.no_reclaim, true],
+    ["Recuperan el PoC", f.reclaimed],
+    ["Pierden el PoC en el retesteo", f.retest_invalid, true],
+    ["Sin reacción a tiempo", f.retest_timeout, true],
+    ["Entradas", f.entries],
+  ];
+  const max = Math.max(1, f.ranges || 0);
+  $("funnel").innerHTML = steps.map(([l, v, lost]) => `<div class="fr"><span>${l}</span><div class="track"><div class="fill${lost ? " lost" : ""}" style="width:${(100 * (v || 0)) / max}%"></div></div><span class="v"><b>${v || 0}</b>${!lost && f.ranges ? " · " + Math.round((100 * (v || 0)) / max) + "%" : ""}</span></div>`).join("") +
+    (f.swept ? `<p class="datainfo" style="margin:8px 0 0">De los barridos, <b>${Math.round((100 * f.reclaimed) / f.swept)} %</b> recuperan el PoC y <b>${Math.round((100 * f.entries) / f.swept)} %</b> acaban en entrada.</p>` : "");
+}
+
+function renderBreakdown(tr) {
+  const key = {
+    sample: (t) => (t.entry_time < R.splitTime ? "Dentro de muestra" : "Fuera de muestra"),
+    side: (t) => (t.side === "long" ? "Largos" : "Cortos"),
+    session: (t) => A.sessionOf(t.entry_time),
+    year: (t) => String(new Date(t.entry_time).getUTCFullYear()),
+  }[BRK];
+  const g = {}; for (const t of tr) (g[key(t)] ||= []).push(t.R);
+  const rows = Object.keys(g).sort().map((k) => { const m = A.metrics(g[k]);
+    return `<tr><td>${k}</td><td class="n">${m.trades}</td><td class="n">${fmt.pct(m.win_rate)}</td><td class="n ${cls(m.avg_R)}">${fmt.R(m.avg_R)}</td><td class="n">${fmt.pf(m.profit_factor)}</td><td class="n ${cls(m.total_R)}">${fmt.R(m.total_R)}</td></tr>`; }).join("");
+  $("breakdown").innerHTML = rows ? `<table><thead><tr><th></th><th>Ops</th><th>Acierto</th><th>Esp. R</th><th>PF</th><th>Total R</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">Sin operaciones</p>`;
+}
+$("brkSeg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; BRK = b.dataset.k;
+  $("brkSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); if (R) renderBreakdown(byVariant()[SEL]); });
+
+function renderTrades(tr) {
+  $("trCount").textContent = `${tr.length} operaciones · ${vLabel(SEL)}`;
+  if (!tr.length) { $("trades").innerHTML = `<p class="empty">Ningún setup cumple las reglas con estos parámetros.</p>`; return; }
+  const list = tr.slice().sort((a, b) => b.entry_time - a.entry_time);
+  if (!SEL_TRADE) SEL_TRADE = list[0];
+  $("trades").innerHTML = `<table><thead><tr><th>Entrada (UTC)</th><th>Lado</th><th>Sesión</th><th>Entrada</th><th>SL</th><th>TP</th><th>Salida</th><th>R</th></tr></thead><tbody>` +
+    list.map((t) => `<tr class="click${t === SEL_TRADE ? " sel" : ""}" tabindex="0" data-i="${R.trades.indexOf(t)}"><td class="n">${fmt.date(t.entry_time)}</td><td>${t.side === "long" ? "Largo" : "Corto"}</td><td>${A.sessionOf(t.entry_time)}</td>
+      <td class="n">${fmt.num(t.entry)}</td><td class="n">${fmt.num(t.sl)}</td><td class="n">${fmt.num(t.tp)}</td><td>${t.exit_reason}</td><td class="n ${cls(t.R)}">${fmt.R(t.R)}</td></tr>`).join("") + `</tbody></table>`;
+}
+function pickTrade(e) { const r = e.target.closest("tr[data-i]"); if (!r) return; SEL_TRADE = R.trades[+r.dataset.i];
+  $("trades").querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel")); r.classList.add("sel"); drawSetup(); }
+$("trades").addEventListener("click", pickTrade);
+$("trades").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickTrade(e); } });
+
+function drawSetup() {
+  const cv = $("chart"), { g, w, h } = prep(cv, cv.clientWidth < 500 ? 260 : 340);
+  const t = SEL_TRADE;
+  g.font = "11px " + css("--f-mono");
+  if (!R || !t) { g.fillStyle = css("--muted"); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(D1 ? "Sin operaciones" : "Carga datos para empezar", w / 2, h / 2); $("setTitle").textContent = ""; return; }
+  const st = t.setup, d = R.dTF, step = engineParams().tf * 60000;
+  let eb = st.signal_bar; while (eb < d.t.length - 1 && d.t[eb] < t.exit_time) eb++;
+  const i0 = Math.max(0, st.range_start - 20), i1 = Math.min(d.t.length - 1, Math.max(st.signal_bar + 30, eb + 8));
+  const pad = { l: 8, r: 64, t: 10, b: 24 };
+  let lo = Infinity, hi = -Infinity;
+  for (let i = i0; i <= i1; i++) { lo = Math.min(lo, d.l[i]); hi = Math.max(hi, d.h[i]); }
+  lo = Math.min(lo, t.sl, isFinite(t.tp) ? t.tp : lo); hi = Math.max(hi, t.sl, isFinite(t.tp) ? t.tp : hi);
+  const yp = (hi - lo) * 0.05; lo -= yp; hi += yp;
+  const nb = i1 - i0 + 1, bw = (w - pad.l - pad.r) / nb;
+  const X = (i) => pad.l + (i - i0 + 0.5) * bw, Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
+  // rejilla
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.textAlign = "left"; g.textBaseline = "middle"; g.lineWidth = 1;
+  for (const v of niceTicks(lo, hi, 6)) { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(w - pad.r, Y(v)); g.stroke(); g.fillText(v.toFixed(v > 1000 ? 0 : 2), w - pad.r + 6, Y(v)); }
+  // rango
+  const rl = Math.min(st.range_low, st.range_high), rh = Math.max(st.range_low, st.range_high);
+  g.fillStyle = css("--muted"); g.globalAlpha = 0.14; g.fillRect(X(st.range_start) - bw / 2, Y(rh), (st.range_end - st.range_start + 1) * bw, Y(rl) - Y(rh)); g.globalAlpha = 1;
+  // niveles
+  const hl = (v, col, from, dash) => { g.strokeStyle = col; g.lineWidth = 1.4; g.setLineDash(dash || []); g.beginPath(); g.moveTo(from, Y(v)); g.lineTo(w - pad.r, Y(v)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = col; g.fillRect(w - pad.r + 2, Y(v) - 8, pad.r - 2, 16); g.fillStyle = css("--surface"); g.textAlign = "left"; g.fillText(v.toFixed(v > 1000 ? 1 : 2), w - pad.r + 6, Y(v)); };
+  // velas
+  const up = css("--up"), dn = css("--down");
+  for (let i = i0; i <= i1; i++) {
+    const c = d.c[i] >= d.o[i] ? up : dn; g.strokeStyle = c; g.fillStyle = c; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(X(i), Y(d.h[i])); g.lineTo(X(i), Y(d.l[i])); g.stroke();
+    const y1 = Y(Math.max(d.o[i], d.c[i])), y2 = Y(Math.min(d.o[i], d.c[i]));
+    g.fillRect(X(i) - Math.max(1, bw * 0.35), y1, Math.max(2, bw * 0.7), Math.max(1, y2 - y1));
+  }
+  hl(st.poc, css("--poc"), X(st.range_start) - bw / 2);
+  hl(t.sl, css("--down"), X(st.signal_bar), [5, 4]);
+  if (isFinite(t.tp)) hl(t.tp, css("--up"), X(st.signal_bar), [5, 4]);
+  // entrada y salida
+  const ac = css("--accent"), ent = st.signal_bar + 1;
+  const tri = (x, y, upw) => { g.fillStyle = ac; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 6, y + (upw ? 10 : -10)); g.lineTo(x + 6, y + (upw ? 10 : -10)); g.closePath(); g.fill(); };
+  tri(X(ent), Y(t.entry) + (t.side === "long" ? 4 : -4), t.side === "long");
+  let xb = ent; while (xb < d.t.length - 1 && d.t[xb + 1] <= t.exit_time) xb++;
+  g.strokeStyle = ac; g.lineWidth = 2; g.beginPath(); g.arc(X(xb), Y(t.exit_reason.startsWith("SL") ? t.sl : t.exit_reason === "tiempo" ? d.c[xb] : t.tp), 5, 0, 7); g.stroke();
+  // eje X
+  g.fillStyle = css("--muted"); g.textAlign = "center"; g.textBaseline = "top";
+  const every = Math.max(1, Math.ceil(nb / Math.max(2, Math.floor((w - 80) / 90))));
+  for (let i = i0; i <= i1; i += every) g.fillText(fmt.date(d.t[i]).slice(5), X(i), h - pad.b + 6);
+  $("setTitle").innerHTML = `${t.side === "long" ? "Largo" : "Corto"} · ${fmt.date(t.entry_time)} UTC · ${esc(t.exit_reason)} · <b class="${cls(t.R)}">${fmt.R(t.R)} R</b>`;
+}
+
+// ---------- Botones ----------
+$("reset").addEventListener("click", () => { P = { ...DEF }; syncForm(); schedule(0); });
+$("copy").addEventListener("click", () => {
+  const txt = JSON.stringify(engineParams(), null, 2), b = $("copy");
+  const done = (ok) => { b.textContent = ok ? "Copiado" : "No se pudo copiar"; setTimeout(() => (b.textContent = "Copiar parámetros"), 1600); };
+  try { navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); } catch (e) { done(false); }
+});
+
+// ---------- Redibujado por tema / tamaño ----------
+let rz; const redraw = () => { clearTimeout(rz); rz = setTimeout(() => { if (R) { drawEquity(byVariant()); drawSetup(); } }, 100); };
+window.addEventListener("resize", redraw);
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw); } catch (e) {}
+new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+buildForm();
+// Abre con la demo cargada para que se vea el funcionamiento
+setData(demoData(), "Demo · paseo aleatorio", true);
+})();
+</script>
