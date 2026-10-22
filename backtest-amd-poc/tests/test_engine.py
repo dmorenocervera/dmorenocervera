@@ -70,7 +70,7 @@ def test_detects_long_setup_and_wins():
 def test_mirror_short_setup():
     df1 = _pattern(mirror=True)
     dft = resample(df1, "15min")
-    setups, funnels = detect(dft, df1, Params(tf="15min"))
+    setups, funnels = detect(dft, df1, Params(tf="15min", sides=("long", "short")))
     shorts = [s for s in setups if s["side"] == "short"]
     assert len(shorts) >= 1, funnels
     trades = simulate(shorts, df1, cost=0.0)
@@ -114,3 +114,14 @@ def test_trailing_stop_never_moves_down():
     cand = np.r_[100, np.maximum.accumulate(hi)[:-1]] - 1.0
     px, t, why, stop = _exit_trailing(op, lo, hi, cl, 100.0, 99.0, cand, 101.0)
     assert why == "trailing" and stop == 102.0 and t == 2 and px == 101.8  # abre por debajo del stop
+
+
+def test_trendline_exit_rides_the_move():
+    df1 = _pattern()
+    dft = resample(df1, "15min")
+    p = Params(tf="15min", sides=("long",))
+    setups, _ = detect(dft, df1, p)
+    tr = simulate(setups, df1, cost=0.0, df_tf=dft, p=p, max_hold_min=10_000).set_index("variant")
+    h = tr.loc["H_directriz"]
+    # la subida es limpia: la directriz no se pierde hasta arriba y la salida captura buena parte del movimiento
+    assert h["exit_reason"] in ("directriz", "tiempo") and h["R"] > 3

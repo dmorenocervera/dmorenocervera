@@ -186,8 +186,8 @@
     tf: 15, atr_len: 50, impulse_bars: 20, impulse_atr: 4.0, range_min_bars: 12, range_max_bars: 60,
     range_max_frac: 0.4, range_max_atr: 5.0, pivot_len: 2, range_min_touches: 2, range_touch_zone: 0.2, sweep_min: 0.15, sweep_max: 1.5, reclaim_max_bars: 30,
     retest_max_bars: 30, touch_tol_atr: 0.1, wick_frac: 0.4, inval_close_atr: 0.25, entry_touch: 1,
-    entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0, target_lookback: 40, tp_front_atr: 0,
-    sl_buffer_atr: 0.05, min_risk_atr: 0.1, poc_bins: 50, long: true, short: true,
+    entry_mode: "close", break_bars: 3, sl_limit_atr: 1.0, trail_atr: 2.5, trail_start_R: 1.0, target_lookback: 40, tp_front_atr: 0, tl_buffer_atr: 0.1, tl_wait_pivot: true,
+    sl_buffer_atr: 0.05, min_risk_atr: 0.1, poc_bins: 50, long: true, short: false,
     ny_open: false, open_window_min: 60, require_impulse: true,
     cost: 0.35, max_hold_min: 4320, min_rr: 1.0, split: 0.7,
   };
@@ -351,6 +351,8 @@
     { id: "B_rango_x1", label: "Rango ×1", kind: "proj", mult: 1 },
     { id: "B_rango_x2", label: "Rango ×2", kind: "proj", mult: 2 },
     { id: "G_estructura_previa", label: "Estructura previa", kind: "struct" },
+    { id: "H_directriz", label: "Directriz", kind: "trendline", structTp: false },
+    { id: "I_directriz_o_estructura", label: "Directriz o estructura", kind: "trendline", structTp: true },
     { id: "C_2R", label: "2R fijo", kind: "r", r: 2 },
     { id: "C_3R", label: "3R fijo", kind: "r", r: 3 },
     { id: "C_5R", label: "5R fijo", kind: "r", r: 5 },
@@ -377,6 +379,29 @@
       if (hi[i] > run) run = hi[i];
     }
     return { px: cl[b - 1], idx: b - 1, why: "tiempo", stop };
+  }
+
+  // Salida por pérdida de la directriz (espacio largo). anchors: [[velaTF, precio], ...] mínimos crecientes.
+  function exitTrendline(op, lo, hi, cl, a0, a1, sl, tp, bOf, Ltf, Ctf, pl, k, anchors, buf, wait) {
+    const a = anchors.slice(), n0 = a.length;
+    let prevB = bOf[a0];
+    for (let i = a0; i < a1; i++) {
+      const b = bOf[i];
+      if (b !== prevB) {
+        for (let bb = prevB; bb < b; bb++) {
+          const q = bb - k, last = a[a.length - 1];
+          if (q >= 0 && q > last[0] && pl[q] && Ltf[q] > last[1]) a.push([q, Ltf[q]]);
+          if (wait && a.length === n0) continue; // aún no hay un mínimo más alto tras la entrada
+          const [b1, p1] = a[a.length - 2], [b2, p2] = a[a.length - 1];
+          const line = p2 + ((p2 - p1) / (b2 - b1)) * (bb - b2);
+          if (Ctf[bb] < line - buf) return { px: op[i], idx: i, why: "directriz", tl: wait && a.length === n0 ? null : a.slice(-2) };
+        }
+        prevB = b;
+      }
+      if (lo[i] <= sl) return { px: sl, idx: i, why: "SL", tl: wait && a.length === n0 ? null : a.slice(-2) };
+      if (hi[i] >= tp) return { px: tp, idx: i, why: "TP", tl: wait && a.length === n0 ? null : a.slice(-2) };
+    }
+    return { px: cl[a1 - 1], idx: a1 - 1, why: "tiempo", tl: wait && a.length === n0 ? null : a.slice(-2) };
   }
 
   function lastPivotLow(L, pl, k) {
@@ -412,7 +437,8 @@
       for (let i = 0; i < n1; i++) { while (b + 1 < dTF.t.length && dTF.t[b + 1] <= t1[i]) b++; bOf[i] = t1[i] >= dTF.t[0] ? b : -1; }
       for (const side of ["long", "short"]) {
         const H = side === "long" ? dTF.h : neg(dTF.l), L = side === "long" ? dTF.l : neg(dTF.h);
-        struct[side] = lastPivotLow(L, pivots(H, L, p.pivot_len).pl, p.pivot_len);
+        const pl = pivots(H, L, p.pivot_len).pl;
+        struct[side] = { ...lastPivotLow(L, pl, p.pivot_len), L, C: side === "long" ? dTF.c : neg(dTF.c), pl };
       }
     }
     let notFilled = 0;
@@ -435,10 +461,10 @@
         if (v.kind === "level") tp = top;
         else if (v.kind === "proj") tp = rh + v.mult * height;
         else if (v.kind === "r") tp = entry + v.r * risk;
-        else if (v.kind === "struct") {
+        else if (v.kind === "struct" || (v.kind === "trendline" && v.structTp)) {
           const lv = st.struct_levels.map((x) => sg * x - p.tp_front_atr * a).sort((x, y) => x - y);
           tp = lv.find((x) => x - entry >= p.min_rr * risk);
-          if (tp === undefined) continue;
+          if (tp === undefined) { if (v.kind === "struct") continue; tp = NaN; }
         }
         if ((v.kind === "level" || v.kind === "proj") && tp - entry < p.min_rr * risk) continue;
         if (v.kind === "level" || v.kind === "proj" || v.kind === "r" || v.kind === "struct") {
@@ -458,6 +484,16 @@
               tp = finalTp;
             }
           }
+        } else if (v.kind === "trendline") {
+          if (!struct[st.side]) continue;
+          const S = struct[st.side];
+          let q0 = st.sweep_bar, q1 = st.first_touch;
+          for (let q = st.sweep_bar; q <= st.reclaim_bar; q++) if (S.L[q] < S.L[q0]) q0 = q;
+          for (let q = st.first_touch; q <= st.signal_bar; q++) if (S.L[q] < S.L[q1]) q1 = q;
+          const anchors = q1 > q0 ? [[q0, S.L[q0]], [q1, S.L[q1]]] : [[q0 - 1, S.L[q0]], [q0, S.L[q0]]];
+          ex = exitTrendline(op, lo, hi, cl, k0, k1, sl, isFinite(tp) ? tp : Infinity, bOf, S.L, S.C, S.pl, p.pivot_len, anchors, p.tl_buffer_atr * a, !!p.tl_wait_pivot);
+          R = (ex.px - entry - cost) / risk;
+          if (ex.tl) ex.tl = ex.tl.map(([b, pr]) => [b, sg * pr]);
         } else {
           const act = entry + p.trail_start_R * risk;
           let candAt;
@@ -476,7 +512,7 @@
         if (ex.why === "SL" && (v.kind !== "trail_atr" && v.kind !== "trail_struct") && isFinite(tp)) {
           for (let i = ex.idx + 1; i < k1; i++) if (hi[i] >= tp) { tpAfterSl = true; break; }
         }
-        rows.push({ tp_after_sl: tpAfterSl, setup: st0, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
+        rows.push({ exit_px: sg * ex.px, tl: ex.tl || null, tp_after_sl: tpAfterSl, setup: st0, variant: v.id, side: st.side, signal_time: st.signal_time, entry_time: t1[k0], entry: sg * entry,
           sl: st.sl, tp: isFinite(tp) ? sg * tp : NaN, risk, exit_time: t1[ex.idx], exit_reason: ex.why, R, cost_R: cost / risk });
       }
     }

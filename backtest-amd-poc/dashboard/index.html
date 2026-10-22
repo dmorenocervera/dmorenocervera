@@ -179,7 +179,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; max-width: 75ch
       <section class="card" aria-labelledby="h-set">
         <div class="hd"><h2 id="h-set">Setup</h2><p id="setTitle">Elige una operación de la lista</p></div>
         <canvas id="chart" height="340"></canvas>
-        <div class="legend"><span><i style="background:var(--poc)"></i>PoC</span><span><i style="background:var(--muted);opacity:.4;height:8px"></i>Rango</span><span><i style="background:var(--down)"></i>SL</span><span><i style="background:var(--up)"></i>TP</span><span><i style="background:var(--muted)"></i>Estructura previa (punteado)</span><span><i style="background:var(--accent)"></i>Entrada / salida · puntos: máximos y mínimos del rango</span></div>
+        <div class="legend"><span><i style="background:var(--poc)"></i>PoC</span><span><i style="background:var(--muted);opacity:.4;height:8px"></i>Rango</span><span><i style="background:var(--down)"></i>SL</span><span><i style="background:var(--up)"></i>TP</span><span><i style="background:var(--muted)"></i>Estructura previa (punteado)</span><span><i style="background:var(--accent)"></i>Directriz</span><span><i style="background:var(--accent)"></i>Entrada / salida · puntos: máximos y mínimos del rango</span></div>
       </section>
 
       <section class="card" aria-labelledby="h-tr">
@@ -245,6 +245,8 @@ const PHASES = [
     { k: "min_rr", l: "R:R mínimo del objetivo", step: 0.25, min: 0, h: "Para las variantes de nivel (origen del impulso, rango ×N): si el objetivo da menos, no se opera." },
     { k: "target_lookback", l: "Estructura previa: velas atrás", step: 5, min: 5, h: "TP «Estructura previa»: primer máximo o mínimo de pivote anterior al rango, por encima de la entrada, que dé al menos el R:R mínimo." },
     { k: "tp_front_atr", l: "Adelantar TP de estructura (ATR)", step: 0.05, min: 0, h: "Coloca el TP un poco antes del nivel, porque el precio suele quedarse a las puertas." },
+    { k: "tl_wait_pivot", l: "Directriz tras nuevo mínimo más alto", type: "bool", h: "Activada: la directriz solo cuenta cuando el movimiento deja un mínimo más alto después de entrar. Desactivada: cuenta desde la entrada, con la línea del mínimo de la manipulación al del retesteo." },
+    { k: "tl_buffer_atr", l: "Margen de la directriz (ATR)", step: 0.05, min: 0, h: "Directriz: línea por los mínimos crecientes desde la manipulación. Se sale cuando una vela cierra x·ATR por debajo." },
     { k: "max_hold_h", l: "Tiempo máximo (horas)", step: 1, min: 1 },
     { k: "trail_start_R", l: "Activar trailing en (R)", step: 0.25, min: 0, h: "Los trailing empiezan a mover el stop cuando el precio llega a +x R. Antes manda el SL inicial." },
     { k: "trail_atr", l: "Distancia trailing ATR", step: 0.25, min: 0.25, h: "Trailing ATR: stop = máximo alcanzado − x·ATR. El trailing por estructura sube el stop bajo cada nuevo mínimo de pivote." },
@@ -253,7 +255,7 @@ const PHASES = [
 
 const DEF = { ...A.DEFAULTS, mode: "general", max_hold_h: A.DEFAULTS.max_hold_min / 60 };
 let P = { ...DEF };
-try { const s = JSON.parse(localStorage.getItem("amd-params") || "null"); if (s) P = { ...DEF, ...s }; } catch (e) {}
+try { const s = JSON.parse(localStorage.getItem("amd-params-v2") || "null"); if (s) P = { ...DEF, ...s }; } catch (e) {}
 
 // ---------- Construcción del formulario ----------
 function buildForm() {
@@ -310,7 +312,7 @@ function engineParams() {
 }
 
 // ---------- Datos ----------
-let D1 = null, TF = {}, DATA_NAME = "", R = null, SEL = "G_estructura_previa", SEL_TRADE = null, BRK = "sample";
+let D1 = null, TF = {}, DATA_NAME = "", R = null, SEL = "I_directriz_o_estructura", SEL_TRADE = null, BRK = "sample";
 
 function setData(d, name, demo) {
   D1 = d; TF = {}; DATA_NAME = name; SEL_TRADE = null;
@@ -364,7 +366,7 @@ $("demo").addEventListener("click", () => setData(demoData(), "Demo · paseo ale
 
 // ---------- Ejecución ----------
 let timer = null;
-function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runNow, ms); try { localStorage.setItem("amd-params", JSON.stringify(P)); } catch (e) {} }
+function schedule(ms = 250) { clearTimeout(timer); timer = setTimeout(runNow, ms); try { localStorage.setItem("amd-params-v2", JSON.stringify(P)); } catch (e) {} }
 function runNow() {
   if (!D1) return;
   const p = engineParams();
@@ -396,7 +398,7 @@ const vLabel = (id) => (A.VARIANTS.find((v) => v.id === id) || {}).label || id;
 // ---------- Render ----------
 function render() {
   const bv = byVariant();
-  if (!bv[SEL]) SEL = "G_estructura_previa";
+  if (!bv[SEL]) SEL = "I_directriz_o_estructura";
   renderSummary(bv[SEL]);
   renderVariants(bv);
   drawEquity(bv);
@@ -612,7 +614,14 @@ function drawSetup() {
   const tri = (x, y, upw) => { g.fillStyle = ac; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 6, y + (upw ? 10 : -10)); g.lineTo(x + 6, y + (upw ? 10 : -10)); g.closePath(); g.fill(); };
   tri(X(ent), Y(t.entry) + (t.side === "long" ? 4 : -4), t.side === "long");
   let xb = ent; while (xb < d.t.length - 1 && d.t[xb + 1] <= t.exit_time) xb++;
-  g.strokeStyle = ac; g.lineWidth = 2; g.beginPath(); g.arc(X(xb), Y(t.exit_reason.startsWith("SL") ? t.sl : t.exit_reason === "tiempo" ? d.c[xb] : t.tp), 5, 0, 7); g.stroke();
+  g.strokeStyle = ac; g.lineWidth = 2; g.beginPath(); g.arc(X(xb), Y(t.exit_px), 5, 0, 7); g.stroke();
+  // directriz (variantes H / I)
+  if (t.tl) {
+    const [[b1, p1], [b2, p2]] = t.tl, slope = (p2 - p1) / (b2 - b1), bEnd = Math.min(xb + 2, i1);
+    g.strokeStyle = css("--accent"); g.lineWidth = 1.6; g.beginPath();
+    g.moveTo(X(Math.max(b1, i0)), Y(p1 + slope * (Math.max(b1, i0) - b1))); g.lineTo(X(bEnd), Y(p1 + slope * (bEnd - b1))); g.stroke();
+    g.fillStyle = css("--accent"); for (const [b, pr] of t.tl) if (b >= i0) { g.beginPath(); g.arc(X(b), Y(pr), 3, 0, 7); g.fill(); }
+  }
   drawLabels();
   // eje X
   g.fillStyle = css("--muted"); g.textAlign = "center"; g.textBaseline = "top";

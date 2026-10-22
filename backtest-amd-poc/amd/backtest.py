@@ -12,6 +12,8 @@ VARIANTS = {
     "B_rango_x1": dict(kind="proj", mult=1.0),
     "B_rango_x2": dict(kind="proj", mult=2.0),
     "G_estructura_previa": dict(kind="struct"),
+    "H_directriz": dict(kind="trendline", struct_tp=False),
+    "I_directriz_o_estructura": dict(kind="trendline", struct_tp=True),
     "C_2R": dict(kind="r", r=2.0),
     "C_3R": dict(kind="r", r=3.0),
     "C_5R": dict(kind="r", r=5.0),
@@ -73,6 +75,37 @@ def _last_pivot_low(L, ph_pl, k):
     return lvl, idx
 
 
+def _exit_trendline(op, lo, hi, cl, sl, tp, bof, Ltf, Ctf, pl, k, anchors, buf, wait=False):
+    """Salida por pérdida de la directriz alcista (en espacio largo).
+    anchors: [(vela_tf, precio)] mínimos crecientes; la línea pasa por los dos últimos.
+    Al cierre de cada vela de la TF: se añade el pivote recién confirmado si es un mínimo más alto,
+    y si el cierre queda por debajo de la línea - buf se sale en la apertura siguiente.
+    Dentro de la vela siguen activos SL y TP (SL primero)."""
+    a = list(anchors)
+    n0 = len(a)
+    n = len(lo)
+    prev_b = bof[0]
+    for i in range(n):
+        b = bof[i]
+        if b != prev_b:
+            for bb in range(prev_b, b):
+                q = bb - k
+                if q >= 0 and q > a[-1][0] and pl[q] and Ltf[q] > a[-1][1]:
+                    a.append((q, Ltf[q]))
+                if wait and len(a) == n0:
+                    continue  # aún no hay un mínimo más alto tras la entrada
+                (b1, p1), (b2, p2) = a[-2], a[-1]
+                line = p2 + (p2 - p1) / (b2 - b1) * (bb - b2)
+                if Ctf[bb] < line - buf:
+                    return op[i], i, "directriz", a[-2:]
+            prev_b = b
+        if lo[i] <= sl:
+            return sl, i, "SL", a[-2:]
+        if hi[i] >= tp:
+            return tp, i, "TP", a[-2:]
+    return cl[n - 1], n - 1, "tiempo", a[-2:]
+
+
 def _fill(st, t1, op, lo, hi, k_from, k_until, sl):
     """Ejecuta la orden de entrada (en espacio largo). Devuelve (k0, precio) o None."""
     typ, level = st["entry_type"], st["entry_level_long"]
@@ -111,8 +144,9 @@ def simulate(setups, df_1m: pd.DataFrame, cost: float, max_hold_min: int = 3 * 2
         for side, sg in (("long", 1.0), ("short", -1.0)):
             H = df_tf["high"].to_numpy() if sg > 0 else -df_tf["low"].to_numpy()
             L = df_tf["low"].to_numpy() if sg > 0 else -df_tf["high"].to_numpy()
+            C = df_tf["close"].to_numpy() * sg
             _, pl = pivots(H, L, p.pivot_len)
-            struct[side] = _last_pivot_low(L, pl, p.pivot_len)
+            struct[side] = _last_pivot_low(L, pl, p.pivot_len) + (L, C, pl)
     rows, not_filled = [], 0
     for st in setups:
         side = st["side"]
@@ -150,12 +184,12 @@ def simulate(setups, df_1m: pd.DataFrame, cost: float, max_hold_min: int = 3 * 2
                 tp = rh + v["mult"] * height
             elif kind == "r":
                 tp = entry + v["r"] * risk
-            elif kind == "struct":
+            elif kind == "struct" or (kind == "trendline" and v["struct_tp"]):
                 # primer nivel de estructura previa que dé al menos min_rr
                 front = getattr(p, "tp_front_atr", 0.0) * a
                 lv = sorted(sg * x - front for x in st["struct_levels"])
                 tp = next((x for x in lv if x - entry >= min_rr * risk), np.nan)
-                if not np.isfinite(tp):
+                if not np.isfinite(tp) and kind == "struct":
                     continue
             if kind in ("level", "proj") and (tp - entry) < min_rr * risk:
                 continue  # el objetivo no compensa el riesgo: no se opera esta variante
@@ -178,6 +212,19 @@ def simulate(setups, df_1m: pd.DataFrame, cost: float, max_hold_min: int = 3 * 2
                         tp = final_tp
                         R = 0.5 * (tp1 - entry) / risk + 0.5 * (px2 - entry) / risk - cost / risk
                         why = "TP1+" + why2
+            elif kind == "trendline":
+                if side not in struct:
+                    continue
+                _, _, Ltf, Ctf, pl = struct[side]
+                sb, rb = st["sweep_bar"], st["reclaim_bar"]
+                q0 = sb + int(np.argmin(Ltf[sb : rb + 1]))
+                ft, sgb = st["first_touch"], st["signal_bar"]
+                q1 = ft + int(np.argmin(Ltf[ft : sgb + 1]))
+                anchors = [(q0, Ltf[q0]), (q1, Ltf[q1])] if q1 > q0 else [(q0 - 1, Ltf[q0]), (q0, Ltf[q0])]
+                px, idx, why, tl = _exit_trendline(o, lo, hi, cl, sl, tp if np.isfinite(tp) else np.inf,
+                                                   b_of_1m[k0:k1], Ltf, Ctf, pl, p.pivot_len, anchors,
+                                                   getattr(p, "tl_buffer_atr", 0.1) * a, getattr(p, "tl_wait_pivot", True))
+                R = (px - entry - cost) / risk
             else:
                 act = entry + trail_start * risk
                 if kind == "trail_atr":
@@ -186,7 +233,7 @@ def simulate(setups, df_1m: pd.DataFrame, cost: float, max_hold_min: int = 3 * 2
                 else:
                     if side not in struct:
                         continue
-                    lvl, pidx = struct[side]
+                    lvl, pidx = struct[side][:2]
                     b = b_of_1m[k0:k1] - 1  # última vela de la TF ya cerrada
                     b = np.clip(b, 0, None)
                     ok = pidx[b] > st["signal_bar"]

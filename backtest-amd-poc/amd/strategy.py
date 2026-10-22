@@ -53,8 +53,10 @@ class Params:
     trail_start_R: float = 1.0      # el trailing se activa cuando el precio llega a +x R
     target_lookback: int = 40       # G: velas antes del rango donde se buscan niveles de estructura
     tp_front_atr: float = 0.0       # G: adelantar el TP x*ATR antes del nivel
+    tl_buffer_atr: float = 0.1      # H/I: el cierre debe quedar x*ATR por debajo de la directriz
+    tl_wait_pivot: bool = True      # H/I: la directriz sólo cuenta tras un nuevo mínimo más alto después de entrar
     poc_bins: int = 50
-    sides: tuple = ("long", "short")
+    sides: tuple = ("long",)            # ("long", "short") para incluir cortos
     # Modo apertura de Nueva York: el rango llega intacto a las 9:30 ET y la
     # manipulación ocurre dentro de la primera ventana tras la apertura.
     ny_open: bool = False
