@@ -17,3 +17,9 @@ The trade does not: every target tested (0.5R–3R, IB extensions, exit at the c
 Breakout close outside the IB after 10:30 → retest of the IB edge → entry on the first candle that closes back outside. Stop at the IB midpoint (`mid`) or one third + 10% buffer inside the IB (`third`). Optional filter: only trade in the direction the 10:30 third points to. 96 configs, chosen on 2005–2012 and checked on 2013–2020. Output in `results_pullback.txt`, `pullback_grid.csv` and `results_costs.txt`.
 
 Best config: 15-min candles, stop at the IB midpoint, 10:30 filter on, exit at the close. 945 trades, +0.157R per trade before costs (t ≈ 3.5, out-of-sample +0.096R). The edge is real before costs, but the stop is only ~5–6 points in 2005–2020, so execution cost decides the result: +0.06R at 0.5 pt per round trip, negative at 1 pt. The 10:30 filter and exiting at the close (not a fixed target) are what make it work.
+
+## Break-even and trailing stop (`ib_trailing.py`)
+
+Tested on the best pullback configs: BE at 0.5–2R, and trailing stops 0.5–2R behind the best price, switched on from the start or after 0.5–1.5R. Output in `results_trailing.txt`.
+
+Neither raises the expectancy. Tight rules (BE at 0.5R, trail ≤ 1R) make it worse: price often goes in favour, comes back to entry and then runs. Wide rules (BE ≥ 1.5R, trail 1.5R) leave it the same. The useful one is risk control: trail 1.5R after +1R keeps almost the same avgR (0.105 vs 0.108 at 0.25 pt cost) with a ~30% smaller max drawdown.
