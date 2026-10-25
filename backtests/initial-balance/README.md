@@ -32,3 +32,9 @@ Neither raises the expectancy. Tight rules (BE at 0.5R, trail ≤ 1R) make it wo
 - Raise the strategy's R in both halves: trend with the 20-day SMA (+0.184R) and open drive (+0.190R). The trend filter doesn't change the hit rate; it makes the winners run further.
 - No help: IB volume (tick volume from a CFD, so a weak proxy), FVG, IFVG, prior week high/low, prior day color.
 - Best combination: trend + open drive, +0.327R per trade (2005–2012 +0.322R, 2013–2020 +0.336R), 56% wins, PF 1.84, ~12 trades a year. The combos were chosen after looking at the whole 2005–2020 sample, so they still need a test on data they have not seen (2021 onwards).
+
+## Other markets (`ib_multi.py`)
+
+Same pullback setup and filters on NAS100 and US2000 (cost 1.25 bps of price). Output in `results_multi.txt`.
+
+It does not carry over: Nasdaq is negative (−0.03R base, −0.08R with the trend filter) and Russell is weak (+0.05 to +0.12R, t < 2). Same-day results correlate 0.6–0.9 with the S&P, so adding these markets brings more trades but little diversification. That the edge only shows on the S&P is a warning sign that part of it may be specific to that sample.
