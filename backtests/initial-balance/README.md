@@ -23,3 +23,12 @@ Best config: 15-min candles, stop at the IB midpoint, 10:30 filter on, exit at t
 Tested on the best pullback configs: BE at 0.5–2R, and trailing stops 0.5–2R behind the best price, switched on from the start or after 0.5–1.5R. Output in `results_trailing.txt`.
 
 Neither raises the expectancy. Tight rules (BE at 0.5R, trail ≤ 1R) make it worse: price often goes in favour, comes back to entry and then runs. Wide rules (BE ≥ 1.5R, trail 1.5R) leave it the same. The useful one is risk control: trail 1.5R after +1R keeps almost the same avgR (0.105 vs 0.108 at 0.25 pt cost) with a ~30% smaller max drawdown.
+
+## Extra filters (`ib_filters.py`, `ib_combos.py`)
+
+24 filters on the 2,103 signal days (price in the top/bottom third at 10:30), each aligned with the signal direction. Two things measured: how often the opposite IB extreme holds ("hit", base 56.8%), and the avg R of the pullback strategy (15-min, stop IB mid, exit at the close, 0.25 pt cost, base +0.109R). Output in `results_filters.txt` / `filters.csv` and `results_combos.txt`.
+
+- Raise the hit rate in both halves: wide IB (>1.3x the 20-day average, 66.9%), open drive (open at the opposite end of the IB, 64.2%), 10:30 price beyond the overnight high/low (63.6%). Narrow IB lowers it to 46%.
+- Raise the strategy's R in both halves: trend with the 20-day SMA (+0.184R) and open drive (+0.190R). The trend filter doesn't change the hit rate; it makes the winners run further.
+- No help: IB volume (tick volume from a CFD, so a weak proxy), FVG, IFVG, prior week high/low, prior day color.
+- Best combination: trend + open drive, +0.327R per trade (2005–2012 +0.322R, 2013–2020 +0.336R), 56% wins, PF 1.84, ~12 trades a year. The combos were chosen after looking at the whole 2005–2020 sample, so they still need a test on data they have not seen (2021 onwards).
